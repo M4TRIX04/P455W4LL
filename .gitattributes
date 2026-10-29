@@ -1,0 +1,26 @@
+# 这个仓库在 Windows 上维护，但产物跑在 Linux 路由器上。
+# 默认的 core.autocrlf 会把脚本 checkout 成 CRLF，传到设备上 sh 直接报错，
+# 所以对必须保持 LF 的类型做强制声明。
+
+# shell 脚本、init 脚本、uci-defaults、hotplug —— 一律 LF
+*.sh            text eol=lf
+*.init          text eol=lf
+luci-app-passwall/root/etc/init.d/*        text eol=lf
+luci-app-passwall/root/etc/uci-defaults/*  text eol=lf
+luci-app-passwall/root/etc/hotplug.d/**    text eol=lf
+
+# Makefile 与补丁 —— GNU make 对 CRLF 敏感，patch 更敏感
+Makefile        text eol=lf
+*.mk            text eol=lf
+*.patch         text eol=lf
+
+# Lua 能容忍 CRLF，但没必要留差异
+*.lua           text eol=lf
+
+# 文档保持 LF，避免整篇 diff
+*.md            text eol=lf
+
+# 二进制产物不做任何转换
+*.ipk           binary
+*.tar.gz        binary
+*.tar.zst       binary
