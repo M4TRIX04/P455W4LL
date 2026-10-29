@@ -12,7 +12,11 @@ set -e
 
 WORK="${1:-/build}"
 SDK_VER="24.10.8"
-SDK_BASE="https://downloads.openwrt.org/releases/${SDK_VER}/targets/x86/64"
+# 默认 x86/64，换设备时用环境变量覆盖，例如：
+#   SDK_TARGET=ramips/mt7621 SDK_FILE=openwrt-sdk-24.10.8-ramips-mt7621_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst ./build.sh
+SDK_TARGET="${SDK_TARGET:-x86/64}"
+SDK_FILE="${SDK_FILE:-}"
+SDK_BASE="https://downloads.openwrt.org/releases/${SDK_VER}/targets/${SDK_TARGET}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 
@@ -21,9 +25,13 @@ cd "$WORK"
 
 # ---------------------------------------------------------------- 1. SDK
 if [ ! -d sdk ]; then
-	echo "==> 下载 SDK ${SDK_VER}"
-	F=$(wget -qO- "$SDK_BASE/" | grep -oE "openwrt-sdk-${SDK_VER}-x86-64[^\"<]*\.tar\.(zst|xz)" | head -1)
-	[ -n "$F" ] || { echo "找不到 SDK 文件名"; exit 1; }
+	echo "==> 下载 SDK ${SDK_VER} (${SDK_TARGET})"
+	if [ -n "$SDK_FILE" ]; then
+		F="$SDK_FILE"
+	else
+		F=$(wget -qO- "$SDK_BASE/" | grep -oE "openwrt-sdk-${SDK_VER}-[^\"<]*\.tar\.(zst|xz)" | head -1)
+	fi
+	[ -n "$F" ] || { echo "找不到 SDK 文件名，请用 SDK_FILE=... 指定"; exit 1; }
 	wget -q "$SDK_BASE/$F" -O "$F"
 	mkdir -p sdk
 	case "$F" in
@@ -135,6 +143,16 @@ for p in luci-app-passwall shadowsocks-c hysteria dns2tcp; do
 	make "package/$p/compile" -j"$JOBS"
 done
 
+# 运行时依赖：官方源里没有，设备上必须和上面的包一起装，
+# 否则 opkg 报依赖不满足
+for p in chinadns-ng dns2socks tcping; do
+	echo "--> $p (依赖)"
+	make "package/feeds/passwall_packages/$p/compile" -j"$JOBS"
+done
+# microsocks 官方 packages feed 里也有，feeds install 装的是官方那个
+echo "--> microsocks (依赖)"
+make "package/feeds/packages/microsocks/compile" -j"$JOBS"
+
 # ---------------------------------------------------------------- 6. 收集
 echo "==> 收集产物"
 mkdir -p "$WORK/out"
@@ -142,7 +160,24 @@ find bin/packages \( \
 	-name "luci-app-passwall*.ipk" -o \
 	-name "shadowsocks-libev-ss-*.ipk" -o \
 	-name "hysteria_*.ipk" -o \
-	-name "dns2tcp_*.ipk" \
+	-name "dns2tcp_*.ipk" -o \
+	-name "chinadns-ng_*.ipk" -o \
+	-name "dns2socks_*.ipk" -o \
+	-name "microsocks_*.ipk" -o \
+	-name "tcping_*.ipk" \
 	\) -exec cp -f {} "$WORK/out/" \;
 ls -lh "$WORK/out"
+
+cat <<'EON'
+
+==> 装到设备上：
+  opkg install *.ipk
+
+  上面这批覆盖了官方源里没有的包。剩下这些依赖由设备自己的软件源提供：
+  libc coreutils coreutils-base64 coreutils-nohup curl ip-full libuci-lua lua
+  luci-compat luci-lib-jsonc resolveip unzip luci-lua-runtime
+  以及运行时的共享库：libuv libcares libsodium libmbedtls libstdcpp
+
+  注意：ipk 的架构必须和设备一致（当前 SDK_TARGET=$SDK_TARGET）。
+EON
 echo "==> 完成：$WORK/out"
