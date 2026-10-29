@@ -59,6 +59,12 @@ fi
 # feed 里的 hysteria 是 v2，和 vendor 的 v1 同名冲突，必须先卸掉
 ./scripts/feeds uninstall hysteria 2>/dev/null || true
 
+# 关于同名包：官方编译说明会先 rm 掉 feeds/packages/net/{microsocks,...} 再
+# clone 整个 passwall-packages 仓库，因为整仓导入会和官方 feed 的同名包打架。
+# 我们只 vendor 三个包、依赖直接用 feed 里的，所以不需要删 ——
+# microsocks 官方 feed 里就有，且是同一个上游项目（1.0.5），直接用即可，
+# 编译路径是 package/feeds/packages/microsocks（不是 passwall_packages）。
+
 # ---------------------------------------------------------------- 3. vendor
 echo "==> 放入 vendor 包"
 for d in shadowsocks-c hysteria dns2tcp; do
