@@ -9,14 +9,21 @@ name: Build
 on:
   push:
     branches: [main]
+    # 显式列文件而不是用 vendor/** —— 改 README 不该触发一次 20 分钟的构建
     paths:
       - 'luci-app-passwall/**'
-      - 'vendor/**'
+      - 'vendor/build.sh'
+      - 'vendor/device-check.sh'
+      - 'vendor/install.sh'
+      - 'vendor/*/Makefile'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - 'luci-app-passwall/**'
-      - 'vendor/**'
+      - 'vendor/build.sh'
+      - 'vendor/device-check.sh'
+      - 'vendor/install.sh'
+      - 'vendor/*/Makefile'
       - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
