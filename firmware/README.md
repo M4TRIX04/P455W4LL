@@ -149,14 +149,31 @@ grep -qx "Package: $p" tmp/.packageinfo          # 构建系统认识这个包
 
 ## 实测验证
 
-在容器里跑通了一次完整构建（x86/64，14 核）。产物 8 个文件，共 130M：
+在容器里跑了**两次完整构建**（x86/64，14 核）：一次全新冷编译，一次增量。
+
+| 场景 | 耗时 |
+|---|---|
+| 冷编译（全新工作目录） | **24 分 44 秒** |
+| 增量（源码树已存在） | 1 分 56 秒 |
+
+冷编译的阶段分解：
+
+| 阶段 | 耗时 |
+|---|---|
+| 克隆源码 + feeds + 生成配置 + 校验 | 1 分 25 秒 |
+| 预下载源码包 | 1 分 37 秒 |
+| **编译（工具链 + 内核 + 全部包 + 打包镜像）** | **21 分 42 秒** |
+
+这比预想的快 —— 之前估 1~2 小时是按 4 核算的。GitHub 的 `ubuntu-24.04` runner 是 4 核，实际大概 60~80 分钟，仍在 350 分钟的 timeout 之内。
+
+产物 8 个文件，共 130M：
 
 ```
 openwrt-x86-64-generic-squashfs-combined.img.gz      21M   ← 写盘用
-openwrt-x86-64-generic-squashfs-combined-efi.img.gz  22M
+openwrt-x86-64-generic-squashfs-combined-efi.img.gz  21M
 openwrt-x86-64-generic-ext4-combined.img.gz          25M
 openwrt-x86-64-generic-ext4-rootfs.img.gz            19M
-openwrt-x86-64-generic-kernel.bin                   6.0M
+openwrt-x86-64-generic-kernel.bin                   5.9M
 sha256sums
 ```
 
