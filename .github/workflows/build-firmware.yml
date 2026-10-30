@@ -1,0 +1,147 @@
+#
+# 全固件编译 —— 把 PassWall 和 vendor 包一起编进 OpenWrt 镜像
+#
+# 与 build.yml 的分工：
+#   build.yml          编 ipk 包（SDK，约 20 分钟），产物可装到任意设备
+#   build-firmware.yml 编整机固件（buildroot，约 1~2 小时），产物是本机专用镜像
+#
+# 这个工作流刻意**不挂 push 触发** —— 一次两小时，改一行代码就跑不值。
+# 只在手动触发或打 fw-* tag 时运行。
+#
+name: Build Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      openwrt_version:
+        description: 'OpenWrt 源码 tag'
+        required: false
+        default: 'v24.10.8'
+      target:
+        description: 'target/subtarget'
+        required: false
+        default: 'x86/64'
+      seed_config:
+        description: '包选择配置（仓库内路径）'
+        required: false
+        default: 'firmware/configs/x86-64.config'
+      feed_ref:
+        description: '本仓库作为 feed 时用的分支'
+        required: false
+        default: 'main'
+  push:
+    tags:
+      - 'fw-*'
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WORK: ${{ github.workspace }}/fw
+
+jobs:
+  build:
+    name: Firmware ${{ github.event.inputs.target || 'x86/64' }}
+    runs-on: ubuntu-24.04
+    # buildroot 在 4 核 runner 上约 1~2 小时，留足余量
+    timeout-minutes: 350
+
+    env:
+      OPENWRT_VERSION: ${{ github.event.inputs.openwrt_version || 'v24.10.8' }}
+      TARGET: ${{ github.event.inputs.target || 'x86/64' }}
+      SEED_CONFIG: ${{ github.event.inputs.seed_config || 'firmware/configs/x86-64.config' }}
+      # feed 直接用当前这次 checkout 的仓库
+      FEED_REPO: ${{ github.server_url }}/${{ github.repository }}.git
+      # 注意不能写 github.ref_name —— 打 tag 时它是 tag 名，src-git 拉不到。
+      # 用显式输入，默认 main。
+      FEED_REF: ${{ github.event.inputs.feed_ref || 'main' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # buildroot 需要 25~30G，runner 默认不够
+      - name: 释放磁盘空间
+        run: |
+          # 只删确定安全的大件。故意不碰 /usr/local/lib/node_modules ——
+          # 那是 runner 的 node 环境，删了可能让后续 action 起不来。
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /opt/hostedtoolcache \
+                      /usr/local/share/boost
+          sudo apt-get clean
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          echo "--- 剩余空间 ---"
+          df -h /
+          avail=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "可用：${avail}G"
+          if [ "$avail" -lt 25 ]; then
+            echo "::error::可用空间只有 ${avail}G，buildroot 至少要 25G"
+            exit 1
+          fi
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gettext \
+            libncurses-dev libssl-dev libelf-dev zlib1g-dev \
+            python3 python3-setuptools python3-yaml rsync unzip file \
+            wget curl git subversion mercurial ca-certificates zstd jq \
+            time ecj fastjar java-propose-classpath
+          # Ubuntu 24.04 的 Python 3.12 移除了 distutils，靠 setuptools 补回
+          python3 -c 'import setuptools' && echo "setuptools OK"
+
+      # 只缓存 dl（源码包），约 2~3G。
+      # 不缓存整个源码树：buildroot 全量 25G+，必然超 GitHub 10G 上限。
+      - name: 恢复源码缓存
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORK }}/openwrt/dl
+          key: dl-${{ env.OPENWRT_VERSION }}-${{ hashFiles('vendor/*/Makefile') }}
+          restore-keys: |
+            dl-${{ env.OPENWRT_VERSION }}-
+
+      - name: 编译固件
+        run: |
+          echo "源码缓存命中: ${{ steps.cache.outputs.cache-hit }}"
+          chmod +x firmware/build.sh
+          ./firmware/build.sh "$WORK"
+
+      - name: 列出产物
+        run: |
+          ls -lh "$WORK/out" || true
+          {
+            echo "### 固件产物（${{ env.TARGET }}）"
+            echo '```'
+            ls -lh "$WORK/out" 2>/dev/null || echo "（无）"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.TARGET }}
+          path: ${{ env.WORK }}/out/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # 失败时日志比镜像有用。logs/ 下每个包一个目录，比控制台完整。
+      - name: 上传编译日志
+        if: failure()
+        run: |
+          cd "$WORK/openwrt" 2>/dev/null || exit 0
+          tar czf "$WORK/logs.tgz" logs/ .config 2>/dev/null || true
+          ls -lh "$WORK/logs.tgz" || true
+
+      - name: 上传编译日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fw-logs-${{ env.TARGET }}
+          path: ${{ env.WORK }}/logs.tgz
+          if-no-files-found: ignore
+          retention-days: 7

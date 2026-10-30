@@ -2,6 +2,8 @@
 
 这套东西解决一个问题：**上游 `openwrt-passwall-packages` 把 PassWall 必需的几个包删了**，直接用官方 feed 编出来的 ipk 装不上、装上也跑不起来。
 
+> 这里编的是**独立的 ipk 包**。要把 PassWall 直接编进 OpenWrt 镜像（刷完就能用、不用再装包），看 [`../firmware/`](../firmware/README.md)。
+
 ## 为什么需要 vendor
 
 上游 feed 的两个删除提交：
