@@ -486,6 +486,20 @@ run_dns2socks() {
 	ln_run "$(first_type dns2socks)" "dns2socks${flag}" $log_file ${_extra_param} "${socks_address}:${socks_port}" "${dns}" "${listen_address}:${listen_port}"
 }
 
+chinadns_ng_ipv6_rule() {
+	# chinadns-ng 新版把 -N 的规则值改成了 ip:china / ip:non_china / tag:<name>，
+	# 旧版用的是裸 tag 名 "gt"。传错值会让它启动即退出，而它的输出被丢进
+	# /dev/null，表现是「日志说启动成功、ps 里却没有进程」。
+	# 这里用 -h 探测支持哪种写法。
+	local _cn_bin="$(first_type chinadns-ng)"
+	[ -n "${_cn_bin}" ] || return 0
+	if "${_cn_bin}" -h 2>&1 | grep -q "ip:non_china"; then
+		echo "ip:non_china"
+	else
+		echo "gt"
+	fi
+}
+
 run_chinadns_ng() {
 	local _listen_port _dns_china _dns_trust _chnlist _gfwlist _no_ipv6_rules _log_path _no_logic_log
 	eval_set_val $@
@@ -1328,7 +1342,7 @@ start_dns() {
 
 	[ "$CHINADNS_NG" = "1" ] && [ -n "$(first_type chinadns-ng)" ] && ([ -n "$chnlist" ] || [ -n "$gfwlist" ]) && {
 		[ "$FILTER_PROXY_IPV6" = "1" ] && {
-			local _no_ipv6_rules="gt"
+			local _no_ipv6_rules="$(chinadns_ng_ipv6_rule)"
 			DNSMASQ_FILTER_IPV6=0
 		}
 		local china_ng_listen_port=$(expr $dns_listen_port + 1)
@@ -1483,7 +1497,7 @@ acl_app() {
 							local _dnsmasq_filter_ipv6=$filter_proxy_ipv6
 							[ "$chinadns_ng" = "1" ] && [ -n "$(first_type chinadns-ng)" ] && ([ "$tcp_proxy_mode" = "chnroute" ] || [ "$tcp_proxy_mode" = "gfwlist" ]) && {
 								[ "$filter_proxy_ipv6" = "1" ] && {
-									local _no_ipv6_rules="gt"
+									local _no_ipv6_rules="$(chinadns_ng_ipv6_rule)"
 									_dnsmasq_filter_ipv6=0
 								}
 								chinadns_port=$(expr $chinadns_port + 1)
