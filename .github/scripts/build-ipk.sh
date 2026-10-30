@@ -31,7 +31,7 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SDK_BASE="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/${SDK_TARGET}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # 仓库根目录：包目录（shadowsocks-c / hysteria / dns2tcp / luci-app-passwall）都在根下
-ROOT="$(cd "$HERE/.." && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
 
 # 期望产出的包数，用于最后断言。加包时记得改这里。
 EXPECT_PKGS=12

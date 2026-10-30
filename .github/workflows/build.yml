@@ -1,8 +1,8 @@
 #
 # PassWall 私有构建 —— GitHub Actions
 #
-# 设计原则：CI 不重复实现构建逻辑，只调用 tools/build-ipk.sh。
-# 本地 `./tools/build-ipk.sh` 和 CI 跑的是同一份脚本，不会出现「本地能编、CI 编不过」。
+# 设计原则：CI 不重复实现构建逻辑，只调用 .github/scripts/build-ipk.sh。
+# 本地 `./.github/scripts/build-ipk.sh` 和 CI 跑的是同一份脚本，不会出现「本地能编、CI 编不过」。
 #
 name: Build
 
@@ -15,7 +15,7 @@ on:
       - 'shadowsocks-c/**'
       - 'hysteria/**'
       - 'dns2tcp/**'
-      - 'tools/build-ipk.sh'
+      - '.github/scripts/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
@@ -23,7 +23,7 @@ on:
       - 'shadowsocks-c/**'
       - 'hysteria/**'
       - 'dns2tcp/**'
-      - 'tools/build-ipk.sh'
+      - '.github/scripts/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
@@ -143,8 +143,8 @@ jobs:
       - name: 构建
         run: |
           echo "feeds 缓存命中: ${{ steps.cache.outputs.cache-hit }}"
-          chmod +x tools/build-ipk.sh
-          ./tools/build-ipk.sh "$WORK"
+          chmod +x .github/scripts/build-ipk.sh
+          ./.github/scripts/build-ipk.sh "$WORK"
 
       - name: 校验产物
         run: |

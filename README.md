@@ -15,7 +15,7 @@ PassWall 的私有构建源。把 LuCI 应用和它依赖的协议二进制打�
 | `hysteria/` | v1.3.5。配置格式与 `util_hysteria.lua` 配套，不能用 feed 里的 v2 |
 | `dns2tcp/` | 1.1.2。上游 feed 已删除，但它是 PassWall 的无条件依赖 |
 | `integration/` | 接进 ImmortalWrt 源码树用的：`.config` 片段 + 校验脚本 |
-| `tools/` | `build-ipk.sh`（SDK 编 ipk）、设备端体检与安装脚本 |
+| `.github/scripts/` | `build-ipk.sh`（用 SDK 单独编 ipk，可选）|
 
 ## 编进固件
 
@@ -44,10 +44,10 @@ sh package/passwall-luci/integration/verify.sh --strict
 ## 单独编 ipk
 
 ```sh
-./tools/build-ipk.sh
+./.github/scripts/build-ipk.sh
 ```
 
-产物 12 个 ipk，装到已有系统上。详见 [`tools/README.md`](tools/README.md)。
+产物 12 个 ipk，装到已有系统上。详见 [`.github/scripts/README.md`](.github/scripts/README.md)。
 
 ## 为什么不用上游
 
