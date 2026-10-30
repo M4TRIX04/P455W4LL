@@ -34,6 +34,8 @@ use_udp_node_resolve_dns=0
 LUA_UTIL_PATH=/usr/lib/lua/luci/passwall
 UTIL_SINGBOX=$LUA_UTIL_PATH/util_sing-box.lua
 UTIL_SS=$LUA_UTIL_PATH/util_shadowsocks.lua
+UTIL_SSR=$LUA_UTIL_PATH/util_ssr.lua
+UTIL_SS_RUST=$LUA_UTIL_PATH/util_ss_rust.lua
 UTIL_XRAY=$LUA_UTIL_PATH/util_xray.lua
 UTIL_TROJAN=$LUA_UTIL_PATH/util_trojan.lua
 UTIL_NAIVE=$LUA_UTIL_PATH/util_naiveproxy.lua
@@ -640,7 +642,7 @@ run_socks() {
 		ln_run "$(first_type $(config_t_get global_app brook_file) brook)" "brook_SOCKS_${flag}" $log_file "$protocol" --socks5 "$bind:$socks_port" -s "${server_host}:${port}${ws_path}" -p "$(config_n_get $node password)"
 	;;
 	ssr)
-		lua $UTIL_SS gen_config -node $node -local_addr "0.0.0.0" -local_port $socks_port -server_host $server_host -server_port $port > $config_file
+		lua $UTIL_SSR gen_config -node $node -local_addr "0.0.0.0" -local_port $socks_port -server_host $server_host -server_port $port > $config_file
 		ln_run "$(first_type ssr-local)" "ssr-local" $log_file -c "$config_file" -v -u
 	;;
 	ss)
@@ -653,7 +655,7 @@ run_socks() {
 			config_file=$(echo $config_file | sed "s/SOCKS/HTTP_SOCKS/g")
 			local _extra_param="-local_http_port $http_port"
 		}
-		lua $UTIL_SS gen_config -node $node -local_socks_port $socks_port -server_host $server_host -server_port $port ${_extra_param} > $config_file
+		lua $UTIL_SS_RUST gen_config -node $node -local_socks_port $socks_port -server_host $server_host -server_port $port ${_extra_param} > $config_file
 		ln_run "$(first_type sslocal)" "sslocal" $log_file -c "$config_file" -v
 	;;
 	hysteria)
@@ -757,7 +759,7 @@ run_redir() {
 			fi
 		;;
 		ssr)
-			lua $UTIL_SS gen_config -node $node -local_addr "0.0.0.0" -local_port $local_port > $config_file
+			lua $UTIL_SSR gen_config -node $node -local_addr "0.0.0.0" -local_port $local_port > $config_file
 			ln_run "$(first_type ssr-redir)" "ssr-redir" $log_file -c "$config_file" -v -U
 		;;
 		ss)
@@ -765,7 +767,7 @@ run_redir() {
 			ln_run "$(first_type ss-redir)" "ss-redir" $log_file -c "$config_file" -v
 		;;
 		ss-rust)
-			lua $UTIL_SS gen_config -node $node -local_udp_redir_port $local_port > $config_file
+			lua $UTIL_SS_RUST gen_config -node $node -local_udp_redir_port $local_port > $config_file
 			ln_run "$(first_type sslocal)" "sslocal" $log_file -c "$config_file" -v
 		;;
 		hysteria)
@@ -946,7 +948,7 @@ run_redir() {
 				UDP_NODE="nil"
 				_extra_param="-u"
 			}
-			lua $UTIL_SS gen_config -node $node -local_addr "0.0.0.0" -local_port $local_port $lua_tproxy_arg > $config_file
+			lua $UTIL_SSR gen_config -node $node -local_addr "0.0.0.0" -local_port $local_port $lua_tproxy_arg > $config_file
 			ln_run "$(first_type ssr-redir)" "ssr-redir" $log_file -c "$config_file" -v ${_extra_param}
 		;;
 		ss)
@@ -980,7 +982,7 @@ run_redir() {
 				UDP_NODE="nil"
 				_extra_param="${_extra_param} -local_udp_redir_port $local_port"
 			}
-			lua $UTIL_SS gen_config -node $node ${_extra_param} > $config_file
+			lua $UTIL_SS_RUST gen_config -node $node ${_extra_param} > $config_file
 			ln_run "$(first_type sslocal)" "sslocal" $log_file -c "$config_file" -v
 		;;
 		hysteria)

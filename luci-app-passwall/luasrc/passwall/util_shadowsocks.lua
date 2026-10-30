@@ -10,20 +10,7 @@ function gen_config_server(node)
 	config.timeout = tonumber(node.timeout)
 	config.fast_open = (node.tcp_fast_open and node.tcp_fast_open == "1") and true or false
 	config.method = node.method
-
-	if node.type == "SS-Rust" then
-		config.server = "::"
-		config.mode = "tcp_and_udp"
-	else
-		config.server = {"[::0]", "0.0.0.0"}
-	end
-
-	if node.type == "SSR" then
-		config.protocol = node.protocol
-		config.protocol_param = node.protocol_param
-		config.obfs = node.obfs
-		config.obfs_param = node.obfs_param
-	end
+	config.server = {"[::0]", "0.0.0.0"}
 
 	return config
 end
@@ -77,58 +64,7 @@ function gen_config(var)
 			config.plugin_opts = node.plugin_opts or nil
 		end
 		config.mode = mode
-	elseif node.type == "SSR" then
-		config.protocol = node.protocol
-		config.protocol_param = node.protocol_param
-		config.obfs = node.obfs
-		config.obfs_param = node.obfs_param
-	elseif node.type == "SS-Rust" then
-		config = {
-			servers = {
-				{
-					address = server,
-					port = tonumber(server_port),
-					method = node.method,
-					password = node.password,
-					timeout = tonumber(node.timeout),
-					plugin = (node.plugin and node.plugin ~= "none") and node.plugin or nil,
-					plugin_opts = (node.plugin and node.plugin ~= "none") and node.plugin_opts or nil
-				}
-			},
-			locals = {},
-			fast_open = (node.tcp_fast_open and node.tcp_fast_open == "true") and true or false
-		}
-		if local_socks_address and local_socks_port then
-			table.insert(config.locals, {
-				local_address = local_socks_address,
-				local_port = tonumber(local_socks_port),
-				mode = "tcp_and_udp"
-			})
-		end
-		if local_http_address and local_http_port then
-			table.insert(config.locals, {
-				protocol = "http",
-				local_address = local_http_address,
-				local_port = tonumber(local_http_port)
-			})
-		end
-		if local_tcp_redir_address and local_tcp_redir_port then
-			table.insert(config.locals, {
-				protocol = "redir",
-				mode = "tcp_only",
-				tcp_redir = var["-tcp_tproxy"] and "tproxy" or nil,
-				local_address = local_tcp_redir_address,
-				local_port = tonumber(local_tcp_redir_port)
-			})
-		end
-		if local_udp_redir_address and local_udp_redir_port then
-			table.insert(config.locals, {
-				protocol = "redir",
-				mode = "udp_only",
-				local_address = local_udp_redir_address,
-				local_port = tonumber(local_udp_redir_port)
-			})
-		end
+
 	end
 
 	return jsonc.stringify(config, 1)
