@@ -1,140 +1,164 @@
-# integration — 把本仓库接进你自己的 ImmortalWrt 源码树
+# integration — 把 PassWall 塞进你的 ImmortalWrt 源码树
 
-目标：编译你自己的 ImmortalWrt 时，`make menuconfig` 里 `LuCI → Applications → luci-app-passwall` 能勾选，编出来的 img 里带着我们这套（PassWall 4.70-5 + shadowsocks-c + hysteria v1）。
+做一件事：让本仓库的包出现在你源码树的 `make menuconfig` 里。选什么是你的事。
 
-编译发生在**你的 ImmortalWrt 源码树**里，不是这里。
+**不改你的 `.config`，不跑 defconfig。** 一条命令放进去，剩下的你自己点。
 
 ## 适用版本
 
 | | 状态 |
 |---|---|
-| ImmortalWrt **24.10**（`openwrt-24.10` 分支） | **已验证**，本文所有结论都基于它 |
+| ImmortalWrt **24.10**（`openwrt-24.10` 分支） | **已验证**，本文所有结论基于它 |
 | ImmortalWrt 25.12 / master | 未验证，不建议 |
+| 原版 OpenWrt 24.10 | 同样适用（路径一致） |
 
-不碰 25.12 的理由不是懒：`luci-app-passwall` 4.70-5 是 **Lua CBI** 应用，依赖 `luci-compat` 和 `luci-lua-runtime`。25.12 的 LuCI 在往纯 JS 迁移，这两个包能不能留、留到什么程度都是未知数。主路由要长期稳定跑，追新分支是负收益。
+不碰 25.12 的理由：`luci-app-passwall` 4.70-5 是 **Lua CBI** 应用，依赖 `luci-compat` + `luci-lua-runtime`。25.12 的 LuCI 在往纯 JS 迁移，这两个包能不能留是未知数。主路由要长期稳定跑，追新分支是负收益。
 
-24.10 是 LTS 线，配套的 `luci-compat` / `luci-lua-runtime` 都在（本文实测确认）。
-
-## 先说最要命的一件事：ImmortalWrt 自带 PassWall
-
-ImmortalWrt 的 feeds 里**已经有 PassWall 了**，而且是更新的版本。实测：
-
-```
-luci-app-passwall   → feeds/luci/applications/luci-app-passwall   25.12.16
-hysteria            → feeds/packages/net/hysteria                 v2
-dns2tcp / chinadns-ng / dns2socks / tcping / ipt2socks / microsocks
-                    → feeds/packages/net/...                      都有
-shadowsocks-libev-ss-* → 完全没有（只有我们提供）
-```
-
-`feeds install -a` 是**按 feeds.conf 顺序装，先装先赢**。官方 feed 排在前面，所以官方版本会占住 `package/feeds/luci/luci-app-passwall`，我们的 4.70-5 **根本不进去** —— 但 `.config` 里照样有 `CONFIG_PACKAGE_luci-app-passwall=y`，编译也不报错，最后镜像里是 25.12.16，不是你的。
-
-这就是上游 README 里那段 `rm -rf feeds/packages/net/{...}` + `rm -rf feeds/luci/applications/luci-app-passwall` 的原因。**不是为了避免整仓导入冲突，就是为了防止同名遮蔽。**
-
-（我一开始判断成前者，是错的。）
-
-## 完整步骤
-
-在你 ImmortalWrt 源码根目录执行。
-
-### 第一步：加 feed
+## 第一步：放进去
 
 ```sh
-cp feeds.conf.default feeds.conf
-cat >> feeds.conf <<'EOF'
-src-git p455w4ll https://github.com/M4TRIX04/P455W4LL.git;main
-src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
-EOF
+cd /path/to/immortalwrt
+sh /path/to/P455W4LL/integration/install-into-tree.sh
 ```
 
-注意 ImmortalWrt 的 `feeds.conf.default` **没有 `base` feed**（基础包在源码树的 `package/` 里），所以直接追加两行就行，不用像 SDK 那样补 base。
+它做四件事，**可以重复执行**（幂等）：
 
-### 第二步：拉取并处理同名遮蔽
+1. 往 `feeds.conf` 追加两行 feed（已有就跳过）
+2. `feeds update -a` + `feeds install -a`
+3. **处理同名遮蔽** —— 这是 ImmortalWrt 上最关键的一步，见下面
+4. 归一化换行符与可执行位
+
+本地开发想用工作树而不是 GitHub 上的：
 
 ```sh
-./scripts/feeds update -a
-./scripts/feeds install -a
+FEED_LOCAL=/path/to/P455W4LL sh integration/install-into-tree.sh
+```
 
-# 删掉官方同名包的源目录，防止 feeds install 又把它们装回来
-rm -rf feeds/luci/applications/luci-app-passwall
-rm -rf feeds/packages/net/hysteria
-rm -rf feeds/packages/net/dns2tcp
+它会先复制到 `/tmp/p455w4ll-feed` 再归一化，**不会改你的工作树**。
 
-# 显式重新安装，确保拿到本仓库的版本
-./scripts/feeds uninstall luci-app-passwall hysteria dns2tcp 2>/dev/null
+跑完应该看到：
+
+```
+==> 确认包已就位
+   OK   luci-app-passwall    package/feeds/p455w4ll/luci-app-passwall  (4.70-5)
+   OK   shadowsocks-c        package/feeds/p455w4ll/shadowsocks-c  (3.3.6)
+   OK   hysteria             package/feeds/p455w4ll/hysteria  (1.3.5)
+   OK   dns2tcp              package/feeds/p455w4ll/dns2tcp  (1.1.2)
+```
+
+## 为什么必须处理同名遮蔽
+
+ImmortalWrt 的 feeds 里**自带 PassWall**。实测 `openwrt-24.10`：
+
+```
+luci-app-passwall  → feeds/luci/applications/luci-app-passwall   25.12.16
+hysteria           → feeds/packages/net/hysteria                 v2
+dns2tcp / chinadns-ng / dns2socks / tcping / ipt2socks / microsocks   都有
+shadowsocks-libev-ss-*   只有本仓库提供
+```
+
+`feeds install -a` 按 `feeds.conf` 顺序装、**先装先赢**。官方 feed 在前，官方版本就占住 `package/feeds/luci/luci-app-passwall`，你的 4.70-5 根本不进去。
+
+但 `.config` 里照样有 `CONFIG_PACKAGE_luci-app-passwall=y`，编译不报错 —— **最后镜像里是 25.12.16，不是你的**。完全静默。
+
+这就是上游 README 里那段 `rm -rf feeds/packages/net/{...}` 的真正原因。不是为了避免整仓导入冲突，就是防同名遮蔽。
+
+脚本里的处理顺序（**顺序本身也有讲究**）：
+
+```sh
+./scripts/feeds uninstall luci-app-passwall hysteria dns2tcp   # 先卸载，链接还能解析
+rm -rf feeds/luci/applications/luci-app-passwall               # 再删源目录
+rm -rf feeds/packages/net/{hysteria,dns2tcp}
 ./scripts/feeds install -p p455w4ll luci-app-passwall hysteria dns2tcp
-
-# 归一化换行符（Windows 提交过的仓库容易带 CRLF）
-find -L feeds/p455w4ll -type f -exec sed -i 's/\r$//' {} + 2>/dev/null || true
-chmod 755 feeds/p455w4ll/root/etc/init.d/* \
-          feeds/p455w4ll/root/etc/hotplug.d/iface/* \
-          feeds/p455w4ll/root/etc/uci-defaults/* \
-          feeds/p455w4ll/root/usr/share/passwall/*.sh 2>/dev/null || true
 ```
 
-**两个动作都要做**，别只做一个：
+反过来先删源目录的话，符号链接会先变悬空，`feeds uninstall` 处理不了它 —— 结果就是「脚本说替换成功了，实际两个版本都在」。我第一版就写错了这个顺序。
 
-- 只 `rm` 不 `install -p` → 官方没了，你的也没装（`feeds install -a` 早跑完了）
-- 只 `install -p` 不 `rm` → 这次能装上，但以后谁再跑一次 `feeds install -a` 就被顶回去
+## 第二步：menuconfig 里选
 
-> **顺序陷阱：配置必须在这一步之后加，不能之前。**
->
-> `scripts/feeds uninstall` 内部会触发一次 `make defconfig`。那一刻包刚被移除，`.config` 里 `CONFIG_PACKAGE_luci-app-passwall=y` 就成了未知符号，被 defconfig 直接丢掉。等你 `install -p` 装回来，`.config` 里已经没有这行了 —— 结果就是「包装好了但没选中」。
->
-> 我第一次测就是这么翻车的：先加配置、再处理遮蔽，最后 `verify.sh` 报三个包 `没选中`。改成先处理遮蔽、再加配置，30 项立刻全绿。
+```
+make menuconfig
 
-### 第三步：加配置
+LuCI
+└── 3. Applications
+    └── <*> luci-app-passwall
+```
+
+选中它之后同级会出现子选项：
+
+```
+[*] Nftables Transparent Proxy      ← 24.10 必须开
+[ ] Iptables Transparent Proxy      ← 只在没有 nftables 的老芯片上开
+[ ] Include Shadowsocks Libev Client
+[ ] Include Hysteria
+...
+```
+
+**别用 `Include XXX` 开关。** 它们在 kconfig 里有循环依赖：
+
+```
+luci-app-passwall → sing-box-tiny → sing-box → (selected by) luci-app-passwall
+```
+
+`make defconfig` 遇到循环依赖会放弃处理，把它们打回 `not set`。直接在同一个菜单里选二进制包：
+
+```
+LuCI → 3. Applications
+  <*> shadowsocks-libev-ss-local
+  <*> shadowsocks-libev-ss-redir
+  <*> shadowsocks-libev-ss-server
+  <*> hysteria
+```
+
+其余 `3. Applications` 里的 LuCI 应用按你自己的需要勾。
+
+### 不想手点的话
 
 ```sh
 cat integration/passwall.config >> .config
-make defconfig
 ```
 
-`passwall.config` 不含 `CONFIG_TARGET_*`，target 由你自己定。
+这份片段只含包选择，不含 `CONFIG_TARGET_*`。里面的注释写了每一条为什么这么选，尤其是 `CONFIG_PACKAGE_dnsmasq=n` 不能删（见坑 4）。
 
-### 第四步：校验
+## 第三步：校验
 
 ```sh
-sh integration/verify.sh
+sh integration/verify.sh            # 宽松模式
+sh integration/verify.sh --strict   # 严格模式，编译前把关
 ```
 
-会查 8 组共 30 项，全过返回 0。它查的是「包到底会不会进镜像」，不是「配置里写了没有」——这两件事不一样，见下面的坑 2。
+| 模式 | 行为 |
+|---|---|
+| 默认（宽松） | 只查集成问题（遮蔽 / 版本 / CRLF），**没选中的包只算跳过不算错** |
+| `--strict` | 还要求 15 个必需包都被选中且构建系统认识 |
 
-**必须在 `make defconfig` 之后、`make` 之前跑。** 早了没有 `tmp/.packageinfo`，晚了就白编了。
-
-## menuconfig 里在哪
+宽松模式适合「刚放进去、还没选」的时候，输出长这样：
 
 ```
-LuCI
-└── 3. Applications
-    └── <*> luci-app-passwall .............. LuCI support for PassWall
-        ├── [ ] Iptables Transparent Proxy
-        ├── [*] Nftables Transparent Proxy
-        ├── [ ] Include Brook
-        ├── [ ] Include Haproxy
-        ├── [ ] Include Hysteria
-        ├── [ ] Include Shadowsocks Libev Client
-        ├── [ ] Include Shadowsocks Libev Server
-        └── ... 其余 INCLUDE_*
+ 通过 16 项，失败 0 项，跳过 14 项
+ => 集成没问题，还有 14 个包等你在 menuconfig 里选
 ```
 
-实测确认：我们 4.70-5 的 20 个子选项全部出现在 Kconfig 里，包括 `INCLUDE_Shadowsocks_Libev_Client` —— 这个在 ImmortalWrt 自带的 25.12.16 里**没有**（它只有 rust 和 SSR）。
+严格模式全过才算可以编：
 
-**但别用那些 INCLUDE 开关**，原因见坑 3。
+```
+ 通过 30 项，失败 0 项，跳过 0 项
+ => 可以开始 make 了
+```
 
-## 五个坑
+**必须在 `make defconfig` 之后跑**（`tmp/.packageinfo` 要有）。
 
-### 坑 1：同名遮蔽（ImmortalWrt 特有，最致命）
+## 四个坑
 
-见上面。表现为「编译一切正常，装进 img 的是 25.12.16，不是你的 4.70-5」。
+### 1. 同名遮蔽
 
-`verify.sh` 的第 [2] 组专门查这个，会检查 `package/feeds/*/luci-app-passwall` 到底指向哪个 feed。
+见上面。`verify.sh` 第 [2] 组专门查这个：`ls -d package/feeds/*/luci-app-passwall`，有多份或指向官方都判 FAIL。
 
-### 坑 2：校验必须查两个地方
+这是唯一能自动发现「编出来不是你的版本」的手段 —— 光看 menuconfig 看不出来，两个版本在菜单里长得一样。
 
-包里**根本不存在的名字**，`.config` 里照样会留下 `CONFIG_PACKAGE_xxx=y` 这个悬空符号 —— grep 得到、编译不报错、镜像「构建成功」但里面没有。
+### 2. 校验必须查两个地方
 
-我第一次测就踩了：`ipt2socks` 显示 OK，实际构建树里不存在。
+包里**根本不存在的名字**，`.config` 里照样会留下 `CONFIG_PACKAGE_xxx=y` 这个悬空符号：grep 得到、编译不报错、镜像「构建成功」但里面没有那个包。
 
 所以 `verify.sh` 同时查：
 
@@ -143,26 +167,7 @@ grep -qx "CONFIG_PACKAGE_$p=y" .config      # 配置里选中了
 grep -qx "Package: $p" tmp/.packageinfo      # 构建系统认识这个包
 ```
 
-`tmp/.packageinfo` 由 `make defconfig` 生成，是构建系统的包数据库，权威来源。
-
-### 坑 3：别用 `INCLUDE_*` 开关，直接选包
-
-`INCLUDE_Shadowsocks_Libev_Client` 这类开关在 kconfig 里有循环依赖：
-
-```
-luci-app-passwall → sing-box-tiny → sing-box → (selected by) luci-app-passwall
-```
-
-`make defconfig` 遇到循环依赖会放弃处理，把这些选项打回 `not set`。所以 `passwall.config` 里是直接选包：
-
-```
-CONFIG_PACKAGE_shadowsocks-libev-ss-redir=y
-CONFIG_PACKAGE_hysteria=y
-```
-
-效果一样 —— PassWall 运行时只认 `/usr/bin` 下有没有对应二进制。
-
-### 坑 4：`Nftables_Transparent_Proxy` 必须是 `y`
+### 3. `Nftables_Transparent_Proxy` 必须开
 
 这项会 `select` 一整套透明代理依赖：
 
@@ -173,64 +178,28 @@ dnsmasq-full     ipt2socks        nftables
 
 不开的话，PassWall 装上了、界面正常、节点能连，**就是转发不了流量**。表现是「上不了网」，很容易误判成节点问题。
 
-只有没有 nftables 的老芯片才改用 `Iptables_Transparent_Proxy`。
+### 4. `dnsmasq-full` 和 `dnsmasq` 会撞文件
 
-### 坑 5：`dnsmasq-full` 和 `dnsmasq` 会撞文件
-
-`Nftables_Transparent_Proxy` 会 `select dnsmasq-full`，但镜像默认又选了基础版。opkg 直接报：
+`Nftables_Transparent_Proxy` 会 `select dnsmasq-full`，但镜像默认又选了基础版。opkg 报：
 
 ```
 check_data_file_clashes: Package dnsmasq-full wants to install file .../etc/init.d/dnsmasq
 	But that file is already provided by package * dnsmasq
 ```
 
-所以 `passwall.config` 里有 `CONFIG_PACKAGE_dnsmasq=n`，**别删**。
-
-这个报错藏在 `Configuring luci-app-passwall` 之后，第一反应会以为是 PassWall 的问题。
+所以要有 `CONFIG_PACKAGE_dnsmasq=n`。这个报错藏在 `Configuring luci-app-passwall` 之后，第一反应会以为是 PassWall 的问题。
 
 ### 附：CRLF 会让 `init.d` 静默失效
 
-`/etc/init.d/passwall` 首行是 `#!/bin/sh /etc/rc.common`。CRLF 会让它变成 `#!/bin/sh /etc/rc.common\r`，`rc.common` 完全无法解析。
+`/etc/init.d/passwall` 首行是 `#!/bin/sh /etc/rc.common`。CRLF 会把它变成 `#!/bin/sh /etc/rc.common\r`，`rc.common` 完全无法解析。
 
 失败同样发生在 `Configuring luci-app-passwall` 之后，opkg 只给 `Error 255`，**不打任何有用信息**。
 
-本仓库的 `.gitattributes` 已经钉了 `eol=lf`，从 GitHub clone 是干净的。但如果你 `src-link` 到 Windows 工作区，必踩 —— 所以第二步里有 `sed -i 's/\r$//'`。
-
-## 做成脚本
-
-把第二步到第四步写成一个脚本，放在源码树根目录，每次编译前跑：
-
-```sh
-#!/bin/bash
-# 文件名：passwall-integrate.sh，放在 ImmortalWrt 源码根目录
-set -e
-
-# 1. 处理同名遮蔽
-rm -rf feeds/luci/applications/luci-app-passwall
-rm -rf feeds/packages/net/hysteria feeds/packages/net/dns2tcp
-./scripts/feeds uninstall luci-app-passwall hysteria dns2tcp 2>/dev/null || true
-./scripts/feeds install -p p455w4ll luci-app-passwall hysteria dns2tcp
-
-# 2. 归一化
-find -L feeds/p455w4ll -type f -exec sed -i 's/\r$//' {} + 2>/dev/null || true
-chmod 755 feeds/p455w4ll/root/etc/init.d/* \
-          feeds/p455w4ll/root/etc/hotplug.d/iface/* \
-          feeds/p455w4ll/root/etc/uci-defaults/* \
-          feeds/p455w4ll/root/usr/share/passwall/*.sh 2>/dev/null || true
-
-# 3. 配置
-cat integration/passwall.config >> .config
-make defconfig
-
-# 4. 校验
-sh integration/verify.sh
-```
-
-在 `./scripts/feeds install -a` 之后、`make` 之前调用。
+脚本里已经做了 `sed -i 's/\r$//'`，但如果你的构建环境另有转换，`verify.sh` 第 [7] 组会抓到。
 
 ## 可复现构建
 
-默认跟 `main`，上游一改你的固件内容就变。要钉死就把 `;main` 换成 `^<commit>`：
+默认跟 `main`，上游一改你的固件内容就变。要钉死就编辑 `feeds.conf`，把 `;main` 换成 `^<commit>`：
 
 ```
 src-git p455w4ll https://github.com/M4TRIX04/P455W4LL.git^<commit>
@@ -250,61 +219,40 @@ cf2e235  remove unused packages - shadowsocks-libev - trojan-plus - tuic-client
 
 | 症状 | 先查 |
 |---|---|
-| 编出来是 25.12.16 不是 4.70-5 | `ls -d package/feeds/*/luci-app-passwall` —— 指向哪个 feed？ |
-| `verify.sh` 报某包 `.config 里没选中` | `grep '<包名>' tmp/.packageinfo`，包在不在？依赖满不满足？ |
-| 报某包 `构建系统不认识` | feed 装没装：`ls package/feeds/` |
+| menuconfig 里找不到 luci-app-passwall | `ls package/feeds/p455w4ll/`，feed 装没装？`feeds.conf` 加了吗？ |
+| 编出来是 25.12.16 不是 4.70-5 | `ls -d package/feeds/*/luci-app-passwall`，指向哪个 feed？ |
+| 报某包 `悬空符号` | 包不存在或 feed 没装好，`grep '<包名>' tmp/.packageinfo` |
 | 报 `hysteria 不是 v1` | `grep PKG_VERSION package/feeds/*/hysteria/Makefile` |
 | 报 `init.d/passwall 是 CRLF` | `head -1 .../init.d/passwall \| od -c` |
 | 编译过了但镜像里没 PassWall | `grep passwall bin/targets/*/*/*.manifest` |
 | 装上了但上不了网 | 查 `Nftables_Transparent_Proxy` 和内核模块 `nft_tproxy` |
 
-最后一条最重要：`bin/targets/<target>/<sub>/*.manifest` 列出镜像内**全部包及版本**，是「这个镜像里到底有什么」的唯一凭据。编译成功 ≠ 装进去了。
+最后两条最重要：`bin/targets/<target>/<sub>/*.manifest` 列出镜像内**全部包及版本**，是「这个镜像里到底有什么」的唯一凭据。编译成功 ≠ 装进去了。
 
 ## 实测记录
 
-在 `immortalwrt/immortalwrt` 的 `openwrt-24.10` 分支、x86/64、14 核容器里**完整编译过一次**（不是只跑到配置层）：
+在 `immortalwrt/immortalwrt` 的 `openwrt-24.10`、x86/64、14 核容器里完整编译过一次：
 
-**耗时 20 分 52 秒**，产物 6 个镜像 + manifest，共 145M：
-
-```
-immortalwrt-x86-64-generic-squashfs-combined.img.gz       24M   ← 写盘用
-immortalwrt-x86-64-generic-squashfs-combined-efi.img.gz   25M
-immortalwrt-x86-64-generic-ext4-combined.img.gz           29M
-immortalwrt-x86-64-generic-ext4-rootfs.img.gz             23M
-```
-
-**manifest（290 个包）里的 PassWall 相关**：
+**20 分 52 秒**，产物 6 个镜像共 145M。镜像内 **290 个包**，PassWall 相关：
 
 ```
-luci-app-passwall - 4.70-5              ← 我们的，不是 ImmortalWrt 自带的 25.12.16
+luci-app-passwall - 4.70-5              ← 我们的，不是自带的 25.12.16
 hysteria - 1.3.5-r1                     ← 我们的 v1，不是 feed 里的 v2
 shadowsocks-libev-ss-local - 3.3.6-r1   ← 我们的 ss-c
 shadowsocks-libev-ss-redir - 3.3.6-r1
 shadowsocks-libev-ss-server - 3.3.6-r1
 dns2tcp - 1.1.2-r1
 dnsmasq-full - 2.93-r1
-chinadns-ng - 2025.08.09-r1
-dns2socks - 2.1-r2
-microsocks - 1.0.5-r2
-tcping - 2020.07.04~db910183-r1
-ipt2socks - 1.1.4-r2
 ```
 
-镜像 rootfs 里 PassWall 相关文件 **125 个**，关键项：
-
-| 检查项 | 结果 |
-|---|---|
-| `/usr/bin/ss-redir` `/ss-local` `/ss-server` | 存在 |
-| `/usr/bin/hysteria` `/dns2tcp` | 存在 |
-| `/etc/init.d/passwall` + `/etc/rc.d/S99passwall` | 存在（开机自启已建立）|
-| `/etc/uci-defaults/luci-passwall` | 存在（首次启动生成 `/etc/config/passwall`）|
-| 内核模块 `nft_tproxy` `nft_socket` `nft_nat` | 3 个齐全 |
+镜像 rootfs 里 PassWall 相关文件 **125 个**：`ss-redir`/`ss-local`/`hysteria`/`dns2tcp` 在 `/usr/bin`，`/etc/rc.d/S99passwall` 自启已建立，内核模块 `nft_tproxy`/`nft_socket`/`nft_nat` 三个齐全。
 
 `/etc/config/passwall` 不在镜像里是正常的 —— 镜像构建阶段 `IPKG_INSTROOT` 非空，`default_postinst` 会跳过 uci-defaults，配置由首次开机生成。
 
-**其他验证**：
+**脚本验证**（都在全新 ImmortalWrt 树上跑）：
 
-- 12 个依赖（luci-compat / luci-lua-runtime / luci-lib-jsonc / libuci-lua / coreutils* / ip-full / resolveip / unzip / curl / lua）ImmortalWrt 全部提供
-- menuconfig 路径：`LuCI → 3. Applications → luci-app-passwall`，20 个子选项齐全
-- `verify.sh` **30 项全绿**
-- 反向验证：故意制造「两个 Transparent_Proxy 都没开」「dnsmasq 冲突」「init.d 是 CRLF」三个错误，`verify.sh` 全部抓到并给出修法
+- `install-into-tree.sh`：干净树 → 4 个包正确落到 `package/feeds/p455w4ll/`，版本 4.70-5 / 3.3.6 / 1.3.5 / 1.1.2
+- `verify.sh` 宽松模式（未选）：16 通过 / 0 失败 / 14 跳过
+- `verify.sh --strict`（未选）：正确报 15 个包没选中
+- `verify.sh --strict`（选好）：30 通过 / 0 失败
+- 反向验证：故意造「Transparent_Proxy 全关」「dnsmasq 冲突」「init.d 加 CRLF」三个错误，全部抓到并给出修法
