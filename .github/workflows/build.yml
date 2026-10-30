@@ -1,0 +1,240 @@
+#
+# PassWall 私有构建 —— GitHub Actions
+#
+# 设计原则：CI 不重复实现构建逻辑，只调用 vendor/build.sh。
+# 本地 `./vendor/build.sh` 和 CI 跑的是同一份脚本，不会出现「本地能编、CI 编不过」。
+#
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'luci-app-passwall/**'
+      - 'vendor/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'luci-app-passwall/**'
+      - 'vendor/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      sdk_version:
+        description: 'OpenWrt SDK 版本'
+        required: false
+        default: '24.10.8'
+      targets:
+        description: '目标平台，空格分隔（如 x86/64 ramips/mt7621）'
+        required: false
+        default: 'x86/64'
+  # 每周一 02:00 (CST) 跑一次。用途不是出包，是**发现 feed 漂移**：
+  # 上游 openwrt-passwall-packages 随时可能删包或改版本，定时跑能在你升级设备前就报警。
+  schedule:
+    - cron: '0 18 * * 0'
+
+# 同一分支只保留最新一次，避免排队堆积
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEFAULT_SDK_VERSION: '24.10.8'
+  # 已验证可用的目标平台（24.10.8）。要加架构就往 workflow_dispatch 的 targets 里填：
+  #   x86/64           x86_64
+  #   ramips/mt7621    mipsel_24kc      （小米/红米 AX 系列、K2P 等）
+  #   mediatek/filogic aarch64_cortex-a53 （MT7981/7986 软路由）
+  #   ipq806x/generic  arm_cortex-a15_neon-vfpv4
+  #   mvebu/cortexa53  aarch64_cortex-a53
+  #   bcm27xx/bcm2711  aarch64_cortex-a72 （树莓派 4）
+  #   rockchip/armv8   aarch64_generic
+  #   ath79/generic    mips_24kc
+
+jobs:
+  # ============================================================ 准备矩阵
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - id: matrix
+        env:
+          INPUT_TARGETS: ${{ github.event.inputs.targets }}
+        run: |
+          set -eu
+          list="${INPUT_TARGETS:-x86/64}"
+          # target 里带斜杠，artifact 名不能带，额外生成 slug
+          json=$(printf '%s\n' $list | jq -R -s -c \
+            'split("\n") | map(select(length > 0)) | map({target: ., slug: (gsub("/"; "-"))})')
+          echo "value={\"include\":$json}" >> "$GITHUB_OUTPUT"
+          echo "本次目标：" $list
+
+  # ============================================================ 构建
+  build:
+    name: ${{ matrix.target }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    env:
+      WORK: ${{ github.workspace }}/work
+      # 注意：job 级 env 里不能用 env 上下文引用别的变量，所以这里写字面量。
+      # push / schedule 事件没有 inputs，|| 会走默认值。
+      SDK_VERSION: ${{ github.event.inputs.sdk_version || '24.10.8' }}
+      SDK_TARGET: ${{ matrix.target }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # SDK + feeds + build_dir 轻松超过 10G，runner 默认空间不够
+      - name: 释放磁盘空间
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gettext \
+            libncurses-dev libssl-dev libelf-dev zlib1g-dev \
+            python3 python3-setuptools rsync unzip file \
+            wget curl git ca-certificates zstd jq
+          # 24.10 的 SDK 用 zstd 压缩；Ubuntu 24.04 的 Python 3.12 移除了
+          # distutils，必须靠 python3-setuptools 补回来，否则 make defconfig
+          # 会卡在 prerequisite check
+          python3 -c 'import setuptools' && echo "setuptools OK"
+
+      # 只缓存 feeds / dl / package 三块，共约 1.5G。
+      #
+      # 为什么不缓存整个 sdk：实测全量（含 build_dir + staging_dir）7.8G，
+      # GitHub 单仓库缓存上限 10G，多架构矩阵会直接超限、静默不保存。
+      # 而且 build_dir 只省几分钟编译时间，不值这个体积。
+      #
+      # 这三块省掉的是**最慢的两个非编译步骤**：feed 克隆（~4 分钟）和
+      # feeds install 的索引生成（~3 分钟）。编译本身仍然每次重做。
+      # 想强制全量重建时，把 key 末尾的 v1 改成 v2。
+      - name: 恢复 feeds 缓存
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WORK }}/sdk/feeds
+            ${{ env.WORK }}/sdk/dl
+            ${{ env.WORK }}/sdk/package
+          key: feeds-${{ env.SDK_VERSION }}-${{ matrix.slug }}-v1
+          restore-keys: |
+            feeds-${{ env.SDK_VERSION }}-${{ matrix.slug }}-
+
+      - name: 构建
+        run: |
+          chmod +x vendor/build.sh
+          ./vendor/build.sh "$WORK"
+
+      - name: 校验产物
+        run: |
+          set -eu
+          cd "$WORK/out"
+
+          count=$(ls -1 ./*.ipk | wc -l)
+          echo "包数：$count"
+
+          # 所有非 all 的包必须是同一个架构。多于一个就说明缓存串了架构，
+          # 编出来的包装到设备上会 incompatible。这个检查与 target 无关，
+          # 不需要维护 target→arch 的映射表。
+          archs=$(for f in ./*.ipk; do
+                    tar xzOf "$f" ./control.tar.gz | tar xzO ./control \
+                      | sed -n 's/^Architecture: //p'
+                  done | sort -u)
+          echo "架构集合：$(echo "$archs" | tr '\n' ' ')"
+
+          native=$(echo "$archs" | grep -vx 'all' || true)
+          n_native=$(echo "$native" | grep -c . || true)
+          if [ "$n_native" -ne 1 ]; then
+            echo "::error::非 all 架构不唯一（$n_native 种：$native），缓存可能串了架构"
+            exit 1
+          fi
+          echo "原生架构：$native"
+
+          {
+            echo "### ${{ matrix.target }}（$native）"
+            echo '```'
+            ls -lh ./*.ipk
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: passwall-${{ matrix.slug }}
+          path: ${{ env.WORK }}/out/*.ipk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 构建日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildlog-${{ matrix.slug }}
+          path: |
+            ${{ env.WORK }}/sdk/logs/
+            ${{ env.WORK }}/sdk/.config
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ============================================================ 发布
+  # 打 tag 时（v*）把 ipk 汇总成一个 Release，方便直接下载安装
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 打包
+        run: |
+          cd artifacts
+          ls -lh
+          zip -r ../passwall-ipk-${{ github.ref_name }}.zip . -x '.*'
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.ipk
+            passwall-ipk-${{ github.ref_name }}.zip
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            ```sh
+            opkg install *.ipk
+            ```
+
+            架构必须与设备一致，用 `opkg print-architecture` 确认。
+
+            ## 包来源
+
+            | 包 | 说明 |
+            |---|---|
+            | `luci-app-passwall` | 4.70-5，纯 `all` 架构 |
+            | `shadowsocks-libev-ss-*` | vendor 的 shadowsocks-c 3.3.6（ss-libev 继任者）|
+            | `hysteria` | vendor 的 1.3.5（v1，与 `util_hysteria.lua` 配套）|
+            | `dns2tcp` | vendor 的 1.1.2（上游 feed 已删）|
+            | `chinadns-ng` `dns2socks` `microsocks` `tcping` | 运行时依赖，取自 feed |
+
+            SDK：${{ env.DEFAULT_SDK_VERSION }}

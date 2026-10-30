@@ -1,63 +1,111 @@
 #!/bin/sh
+# ============================================================================
 # 一键构建：OpenWrt SDK + luci-app-passwall + vendor 包
 #
 # 用法：
-#   ./build.sh [工作目录]      默认 /build
+#   ./build.sh [工作目录]              默认 /build
+#
+# 环境变量：
+#   SDK_VERSION=24.10.8                SDK 版本
+#   SDK_TARGET=x86/64                  目标平台（target/subtarget）
+#   SDK_FILE=<文件名>                  手动指定 SDK 文件名（一般不用，会自动发现）
+#   PASSWALL_SRC=/path                 指定 luci-app-passwall 源码目录
+#   JOBS=8                             并行度，默认 nproc
+#   BUILD_VERBOSE=1                    打印完整编译日志（V=s）
+#   KEEP_BUILD=1                       保留 build_dir（默认保留，增量快）
 #
 # 产物：$WORK/out/*.ipk
 #
-# 依赖：wget、tar（24.10 的 SDK 是 zstd 压缩，需要 zstd）、make、gcc、git
+# 依赖：wget 或 curl、tar（24.10 的 SDK 是 zstd 压缩，需要 zstd）、make、gcc、git
+# ============================================================================
 
-set -e
+set -eu
 
 WORK="${1:-/build}"
-SDK_VER="24.10.8"
-# 默认 x86/64，换设备时用环境变量覆盖，例如：
-#   SDK_TARGET=ramips/mt7621 SDK_FILE=openwrt-sdk-24.10.8-ramips-mt7621_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst ./build.sh
+SDK_VERSION="${SDK_VERSION:-24.10.8}"
 SDK_TARGET="${SDK_TARGET:-x86/64}"
 SDK_FILE="${SDK_FILE:-}"
-SDK_BASE="https://downloads.openwrt.org/releases/${SDK_VER}/targets/${SDK_TARGET}"
+BUILD_VERBOSE="${BUILD_VERBOSE:-0}"
+JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
+
+SDK_BASE="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/${SDK_TARGET}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-JOBS="$(nproc 2>/dev/null || echo 4)"
+
+# 期望产出的包数，用于最后断言。加包时记得改这里。
+EXPECT_PKGS=12
+
+START_TS=$(date +%s)
+log() { printf '\n==> %s\n' "$*"; }
+die() { printf '\n!! %s\n' "$*" >&2; exit 1; }
+
+# 优先 curl，其次 wget
+fetch() {
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL "$1"
+	else
+		wget -qO- "$1"
+	fi
+}
+download() {
+	if command -v curl >/dev/null 2>&1; then
+		curl -fL --retry 3 --retry-delay 2 -o "$2" "$1"
+	else
+		wget -q --tries=3 -O "$2" "$1"
+	fi
+}
 
 mkdir -p "$WORK"
 cd "$WORK"
 
 # ---------------------------------------------------------------- 1. SDK
-if [ ! -d sdk ]; then
-	echo "==> 下载 SDK ${SDK_VER} (${SDK_TARGET})"
+# 用 sdk/scripts/feeds 当哨兵，而不是 sdk 目录本身 ——
+# CI 里可能只恢复了缓存的 sdk/feeds，目录存在但 SDK 不完整。
+if [ ! -f sdk/scripts/feeds ]; then
+	log "下载 SDK ${SDK_VERSION} (${SDK_TARGET})"
+
 	if [ -n "$SDK_FILE" ]; then
 		F="$SDK_FILE"
 	else
-		F=$(wget -qO- "$SDK_BASE/" | grep -oE "openwrt-sdk-${SDK_VER}-[^\"<]*\.tar\.(zst|xz)" | head -1)
+		F=$(fetch "$SDK_BASE/" | grep -oE "openwrt-sdk-${SDK_VERSION}-[^\"<]*\.tar\.(zst|xz)" | head -1)
 	fi
-	[ -n "$F" ] || { echo "找不到 SDK 文件名，请用 SDK_FILE=... 指定"; exit 1; }
-	wget -q "$SDK_BASE/$F" -O "$F"
+	[ -n "$F" ] || die "在 ${SDK_BASE}/ 下找不到 SDK 文件名。检查 SDK_VERSION / SDK_TARGET，或用 SDK_FILE=... 指定"
+
+	echo "   文件：$F"
+	[ -f "$F" ] || download "$SDK_BASE/$F" "$F"
 	mkdir -p sdk
 	case "$F" in
 		*.zst) tar --zstd -xf "$F" -C sdk --strip-components=1 ;;
 		*)     tar -xJf   "$F" -C sdk --strip-components=1 ;;
 	esac
+	[ -f sdk/scripts/feeds ] || die "SDK 解压后没有 scripts/feeds，压缩包可能损坏"
+else
+	log "复用已有 SDK（sdk/scripts/feeds 存在）"
 fi
 cd sdk
 
 # ---------------------------------------------------------------- 2. feeds
 # 必须包含 base feed —— SDK 的基础包（lua/ucode/libnl-tiny）来自它，不在 package/ 里
 if [ ! -d feeds/luci ]; then
-	echo "==> 配置 feeds"
+	log "配置并拉取 feeds"
 	cp feeds.conf.default feeds.conf
 	sed -i 's|^src-git-full base|src-git base|' feeds.conf
-	# 只要 base/packages/luci 三个 feed，routing/telephony 用不上，
-	# 去掉能少编译几十个包
+	# routing / telephony 用不上，去掉能少拉几十个包
 	sed -i '/^src-git routing /d;/^src-git telephony /d' feeds.conf
 	grep -q "passwall_packages" feeds.conf || \
 		echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main" >> feeds.conf
 	./scripts/feeds update -a
+else
+	log "复用已有 feeds（跳过 update）"
+fi
+
+# install 单独判断：CI 缓存可能只恢复了 feeds/ 而没恢复 package/feeds/ 的符号链接
+if [ ! -d package/feeds/luci ]; then
+	log "安装 feeds 到 package/"
 	./scripts/feeds install -a
 fi
 
 # feed 里的 hysteria 是 v2，和 vendor 的 v1 同名冲突，必须先卸掉
-./scripts/feeds uninstall hysteria 2>/dev/null || true
+./scripts/feeds uninstall hysteria >/dev/null 2>&1 || true
 
 # 关于同名包：官方编译说明会先 rm 掉 feeds/packages/net/{microsocks,...} 再
 # clone 整个 passwall-packages 仓库，因为整仓导入会和官方 feed 的同名包打架。
@@ -66,16 +114,15 @@ fi
 # 编译路径是 package/feeds/packages/microsocks（不是 passwall_packages）。
 
 # ---------------------------------------------------------------- 3. vendor
-echo "==> 放入 vendor 包"
+log "放入 vendor 包"
 for d in shadowsocks-c hysteria dns2tcp; do
 	rm -rf "package/$d"
 	cp -r "$HERE/$d" "package/$d"
 done
 
-# luci-app-passwall 本体：默认取 vendor 的同级目录
 SRC_PW="${PASSWALL_SRC:-$HERE/../luci-app-passwall}"
 if [ -d "$SRC_PW" ]; then
-	echo "==> 放入 luci-app-passwall（$SRC_PW）"
+	log "放入 luci-app-passwall（$SRC_PW）"
 	rm -rf package/luci-app-passwall
 	cp -r "$SRC_PW" package/luci-app-passwall
 	# Windows 工作区是 CRLF，直接编会破坏 Makefile 和脚本
@@ -85,10 +132,12 @@ if [ -d "$SRC_PW" ]; then
 		package/luci-app-passwall/root/etc/hotplug.d/iface/* \
 		package/luci-app-passwall/root/etc/uci-defaults/* \
 		package/luci-app-passwall/root/usr/share/passwall/*.sh 2>/dev/null || true
+else
+	die "找不到 luci-app-passwall 源码：$SRC_PW"
 fi
 
 # ---------------------------------------------------------------- 4. 配置
-echo "==> 生成 .config"
+log "生成 .config"
 cat > .config <<'EOF'
 CONFIG_ALL_NONSHARED=n
 CONFIG_ALL_KMODS=n
@@ -117,6 +166,7 @@ CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin=n
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=n
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin=n
 EOF
+# defconfig 可能因为上游 kconfig 循环依赖报错，不阻塞，后面直接选包
 make defconfig >/dev/null 2>&1 || true
 
 # 直接选中需要的包。
@@ -135,32 +185,38 @@ CONFIG_PACKAGE_dns2tcp=m
 EOF
 
 # ---------------------------------------------------------------- 5. 编译
+V=""
+[ "$BUILD_VERBOSE" = "1" ] && V="V=s"
+
 # 不能直接用 `make package/compile` —— 那会把 SDK 默认选中的全部基础包
 # （base-files、grub2、mac80211 …）都拉进来，其中 base-files 在 SDK 里会构建失败。
 # 这里按依赖顺序定向编译：先补 luci-base 需要的三个基础库，再编本包和 vendor 包。
-echo "==> 开始编译（-j$JOBS）"
+log "编译基础库（-j$JOBS）"
 for p in lua ucode libnl-tiny; do
-	echo "--> $p"
-	make "package/feeds/base/$p/compile" -j"$JOBS" || true
+	if [ -d "package/feeds/base/$p" ]; then
+		echo "--> $p"
+		make "package/feeds/base/$p/compile" -j"$JOBS" $V
+	fi
 done
 
+log "编译主包与 vendor 包"
 for p in luci-app-passwall shadowsocks-c hysteria dns2tcp; do
 	echo "--> $p"
-	make "package/$p/compile" -j"$JOBS"
+	make "package/$p/compile" -j"$JOBS" $V
 done
 
-# 运行时依赖：官方源里没有，设备上必须和上面的包一起装，
-# 否则 opkg 报依赖不满足
+log "编译运行时依赖"
 for p in chinadns-ng dns2socks tcping; do
-	echo "--> $p (依赖)"
-	make "package/feeds/passwall_packages/$p/compile" -j"$JOBS"
+	echo "--> $p"
+	make "package/feeds/passwall_packages/$p/compile" -j"$JOBS" $V
 done
 # microsocks 官方 packages feed 里也有，feeds install 装的是官方那个
-echo "--> microsocks (依赖)"
-make "package/feeds/packages/microsocks/compile" -j"$JOBS"
+echo "--> microsocks"
+make "package/feeds/packages/microsocks/compile" -j"$JOBS" $V
 
 # ---------------------------------------------------------------- 6. 收集
-echo "==> 收集产物"
+log "收集产物"
+rm -rf "$WORK/out"
 mkdir -p "$WORK/out"
 find bin/packages \( \
 	-name "luci-app-passwall*.ipk" -o \
@@ -172,18 +228,26 @@ find bin/packages \( \
 	-name "microsocks_*.ipk" -o \
 	-name "tcping_*.ipk" \
 	\) -exec cp -f {} "$WORK/out/" \;
+
+N=$(find "$WORK/out" -name '*.ipk' | wc -l)
 ls -lh "$WORK/out"
 
-cat <<'EON'
+if [ "$N" -ne "$EXPECT_PKGS" ]; then
+	die "产物数量不对：期望 $EXPECT_PKGS 个，实际 $N 个。缺包说明某个 make 步骤没产出，检查上面的日志。"
+fi
 
-==> 装到设备上：
-  opkg install *.ipk
+ELAPSED=$(( $(date +%s) - START_TS ))
+cat <<EON
+
+==> 完成：$WORK/out（$N 个包，耗时 $((ELAPSED / 60)) 分 $((ELAPSED % 60)) 秒）
+
+  装到设备上：
+    opkg install *.ipk
 
   上面这批覆盖了官方源里没有的包。剩下这些依赖由设备自己的软件源提供：
-  libc coreutils coreutils-base64 coreutils-nohup curl ip-full libuci-lua lua
-  luci-compat luci-lib-jsonc resolveip unzip luci-lua-runtime
-  以及运行时的共享库：libuv libcares libsodium libmbedtls libstdcpp
+    libc coreutils coreutils-base64 coreutils-nohup curl ip-full libuci-lua lua
+    luci-compat luci-lib-jsonc resolveip unzip luci-lua-runtime
+    以及运行时共享库：libuv libcares libsodium libmbedtls libstdcpp
 
-  注意：ipk 的架构必须和设备一致（当前 SDK_TARGET=$SDK_TARGET）。
+  注意：ipk 架构必须和设备一致（当前 SDK_TARGET=$SDK_TARGET）。
 EON
-echo "==> 完成：$WORK/out"

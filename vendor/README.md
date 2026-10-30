@@ -131,3 +131,113 @@ PACKAGE_luci-app-passwall → sing-box-tiny → sing-box → (selected by) luci-
 | `dns2socks_2.1-r3` | — | x86_64 |
 | `microsocks_1.0.5-r2` | — | x86_64 |
 | `tcping_0.3-r1` | — | x86_64 |
+
+## GitHub Actions
+
+`.github/workflows/build.yml`，三个 job：
+
+| job | 作用 |
+|---|---|
+| `prepare` | 把 `targets` 输入（空格分隔）转成矩阵 JSON，顺带生成不带斜杠的 `slug` 给 artifact 命名 |
+| `build` | 矩阵构建，每个 target 一个 runner |
+| `release` | 打 `v*` tag 时汇总所有 ipk 发 Release |
+
+**核心设计：CI 不重写构建逻辑，只调 `vendor/build.sh`。** 本地和线上跑的是同一份脚本，不会出现「本地能编、CI 编不过」。
+
+### 触发条件
+
+| 事件 | 行为 |
+|---|---|
+| push 到 `main`（改 `luci-app-passwall/` `vendor/` 或本工作流） | 构建默认架构 |
+| pull_request（同上路径） | 构建默认架构 |
+| 手动 `workflow_dispatch` | 可指定 SDK 版本和任意 target 列表 |
+| 每周一 02:00 CST（cron `0 18 * * 0`） | 构建默认架构 |
+
+那条 cron **不是为了出包，是为了发现 feed 漂移**。上游 `openwrt-passwall-packages` 随时可能删包或改版本（hysteria v1 → v2 就是活例子），定时跑能在你升级设备之前就报警。
+
+### 加一个架构
+
+手动触发时在 `targets` 里填，空格分隔：
+
+```
+x86/64 ramips/mt7621 mediatek/filogic
+```
+
+要改成每次默认都编多个，就动工作流里 `prepare` job 的 `list="${INPUT_TARGETS:-x86/64}"`，把 `x86/64` 换成列表。
+
+已验证的 target 与对应架构：
+
+| target | 架构 | 典型设备 |
+|---|---|---|
+| `x86/64` | `x86_64` | 软路由 |
+| `ramips/mt7621` | `mipsel_24kc` | 小米/红米 AX、K2P |
+| `mediatek/filogic` | `aarch64_cortex-a53` | MT7981/7986 软路由 |
+| `ipq806x/generic` | `arm_cortex-a15_neon-vfpv4` | 网件 R7800 |
+| `mvebu/cortexa53` | `aarch64_cortex-a53` | 部分 ARM 路由 |
+| `bcm27xx/bcm2711` | `aarch64_cortex-a72` | 树莓派 4 |
+| `rockchip/armv8` | `aarch64_generic` | RK3399 盒子 |
+| `ath79/generic` | `mips_24kc` | 老款 AR 芯片 |
+
+SDK 文件名由 `build.sh` 自动从目录列表里抓，不用手填。注意 ARM 32 位平台的包名带 `_eabi`、其余不带，这个差异脚本自己处理。
+
+### 缓存
+
+只缓存三块，共约 **1.5G**：
+
+```yaml
+path: |
+  ${{ env.WORK }}/sdk/feeds     # 409M  feed 克隆结果
+  ${{ env.WORK }}/sdk/dl        # 1.1G  源码包与 Go 工具链
+  ${{ env.WORK }}/sdk/package   # 3.7M  feeds install 生成的符号链接
+key: feeds-${{ env.SDK_VERSION }}-${{ matrix.slug }}-v1
+```
+
+**为什么不缓存整个 sdk**：实测全量（含 `build_dir` 4.3G + `staging_dir` 1.7G）是 **7.8G**，而 GitHub 单仓库缓存上限 10G，多架构矩阵必然超限、且超限是**静默不保存**（不报错，只是每次都全量重建）。`build_dir` 也只省几分钟编译，不值这个体积。
+
+这三块省掉的是最慢的两个**非编译**步骤：feed 克隆（~4 分钟）和 `feeds install` 的索引生成（~3 分钟）。编译本身仍然每次重做。
+
+实测耗时（x86/64，14 核）：
+
+| 场景 | 耗时 |
+|---|---|
+| 冷启动（无缓存） | **12 分 28 秒** |
+| 有 feeds 缓存 | 约 9~10 分钟 |
+
+**想强制全量重建**：把 key 末尾的 `v1` 改成 `v2`。
+
+缓存命中时 `build.sh` 的行为（靠三个哨兵判断，都不需要额外参数）：
+
+| 哨兵 | 存在则跳过 |
+|---|---|
+| `sdk/scripts/feeds` | SDK 下载与解压 |
+| `sdk/feeds/luci` | `feeds update -a` |
+| `sdk/package/feeds/luci` | `feeds install -a` |
+
+所以哪怕只恢复了 `feeds/` 而没恢复 `package/`，脚本也会正确地只跑 `install`，不会重复克隆。这也是为什么 `build.sh` 用 `sdk/scripts/feeds` 而不是 `sdk` 目录本身当哨兵。
+
+### 产物校验
+
+`build.sh` 末尾会断言包数等于 `EXPECT_PKGS`（当前 12），不对就退出 1。**加包时记得改这个常量**，否则 CI 会一直报数量不符。
+
+工作流里还有一道架构检查：所有非 `all` 的包必须是同一个架构，出现两种就说明缓存串了架构（比如 x86 的 build_dir 被 ARM 的 job 复用），会直接 fail 而不是产出一个装不上的包。
+
+### 本地复现 CI
+
+CI 的每一步都能在本地跑：
+
+```sh
+# 完全等价于 CI
+WORK=/tmp/ci-work SDK_VERSION=24.10.8 SDK_TARGET=x86/64 ./vendor/build.sh /tmp/ci-work
+```
+
+如果 CI 挂了但本地不挂，八成是这两件事之一：
+
+1. **缓存脏了** —— 换 cache key 重跑
+2. **runner 磁盘满了** —— 工作流里有一步删 `/usr/local/lib/android` 等预装 SDK，本地没有这一步
+
+### 失败时看什么
+
+工作流在失败时会额外上传 `buildlog-<slug>` artifact，里面有 `sdk/logs/` 和 `sdk/.config`。
+
+`sdk/logs/` 下每个包一个目录，里面是 `configure`、`compile.txt` 这些，比 CI 控制台输出完整得多。
+
