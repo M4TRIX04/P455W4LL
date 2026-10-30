@@ -14,8 +14,14 @@ PassWall 的私有构建源。把 LuCI 应用和它依赖的协议二进制打�
 | `shadowsocks-c/` | 产出 `shadowsocks-libev-ss-*` 五个包。ss-libev 的继任者，CLI 与 JSON 配置完全兼容 |
 | `hysteria/` | v1.3.5。配置格式与 `util_hysteria.lua` 配套，不能用 feed 里的 v2 |
 | `dns2tcp/` | 1.1.2。上游 feed 已删除，但它是 PassWall 的无条件依赖 |
-| `integration/` | 接进 ImmortalWrt 源码树用的：`.config` 片段 + 校验脚本 |
 | `.github/scripts/` | `build-ipk.sh`（用 SDK 单独编 ipk，可选）|
+
+**接入用的配置片段、校验脚本、架构文档都在 [`meta`](../../tree/meta) 分支** —— 它们不参与编译，单独放一边，`main` 保持纯粹。
+
+```sh
+# 需要时单独拉一份
+git clone -b meta https://github.com/M4TRIX04/P455W4LL /tmp/p455w4ll-meta
+```
 
 ## 编进固件
 
@@ -33,13 +39,14 @@ git clone https://github.com/M4TRIX04/P455W4LL package/passwall-luci
 
 然后 `make menuconfig` → `LuCI → 3. Applications → luci-app-passwall`。
 
-编之前建议跑一次校验：
+编之前建议跑一次校验（脚本在 `meta` 分支）：
 
 ```sh
-sh package/passwall-luci/integration/verify.sh --strict
+git show origin/meta:integration/verify.sh > /tmp/verify.sh
+cd /path/to/immortalwrt && sh /tmp/verify.sh --strict
 ```
 
-详见 [`integration/README.md`](integration/README.md)。
+它会查同名遮蔽、hysteria 版本、`init.d` 换行符、dnsmasq 冲突这些**光看 menuconfig 看不出来**的问题。详见 [`meta` 分支的 integration/README.md](../../tree/meta/integration)。
 
 ## 单独编 ipk
 
