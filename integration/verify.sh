@@ -7,12 +7,13 @@
 #   sh verify.sh --strict        严格模式：还要求 15 个必需包都被选中
 #   sh verify.sh /path/to/tree   指定源码树
 #
-# 宽松模式适合「包刚放进去、还没在 menuconfig 里选」的时候。
-# 严格模式适合编译前把关，或者放进 CI。
+# 两种接入方式都认：
+#   A. git clone <repo> package/passwall-luci   → package/passwall-luci/<pkg>
+#   B. feeds.conf 加 src-git                    → package/feeds/<feed>/<pkg>
 #
 # 这个脚本查的不是「配置里写了没有」，而是「包到底会不会进镜像」。
 # 两者不是一回事，最典型的是同名遮蔽：ImmortalWrt 自带 luci-app-passwall，
-# feeds install 先装先赢，你的版本根本不进 package/feeds/，
+# feeds install 先装先赢，你的版本根本不进去，
 # 但 .config 里照样有 CONFIG_PACKAGE_xxx=y，编译也不报错。
 # ============================================================================
 
@@ -40,6 +41,23 @@ skip(){ SKIP=$((SKIP + 1)); printf '  \033[90m--\033[0m   %s\n' "$1"; }
 
 selected() { grep -qx "CONFIG_PACKAGE_$1=y" .config 2>/dev/null; }
 
+# 找出包目录。可能在 package/<克隆目录>/<pkg> 或 package/feeds/<feed>/<pkg>
+locate() {
+	find -L package -maxdepth 3 -type d -name "$1" 2>/dev/null
+}
+
+# 判断这个位置是不是「我们提供的」：
+#   克隆进 package/ 的          → 算（core 包，feed 遮蔽不了它）
+#   package/feeds/p455w4ll/     → 算（feed 方式，且是我们的 feed）
+#   package/feeds/<别的feed>/   → 不算（被官方 feed 遮蔽了）
+is_ours() {
+	case "$1" in
+		package/feeds/p455w4ll/*) return 0 ;;
+		package/feeds/*)          return 1 ;;
+		*)                        return 0 ;;
+	esac
+}
+
 echo "============================================================"
 echo " PassWall 集成校验（$MODE 模式）"
 echo " 源码树：$(pwd)"
@@ -60,14 +78,19 @@ if [ ! -f tmp/.packageinfo ]; then
 fi
 ok "tmp/.packageinfo 存在"
 
-# ---------------------------------------------------------------- 1. feed
+# ---------------------------------------------------------------- 1. 包位置
 echo
-echo "[1] feed 是否装上（按源包名查，子包不算）"
+echo "[1] 包是否放进源码树（按源包名查，子包不算）"
 for p in luci-app-passwall shadowsocks-c hysteria dns2tcp chinadns-ng ipt2socks; do
-	if find -L package/feeds -maxdepth 2 -name "$p" 2>/dev/null | grep -q .; then
-		ok "$p"
+	matches=$(locate "$p")
+	n=$(printf '%s\n' "$matches" | grep -c . 2>/dev/null || echo 0)
+	if [ "$n" -eq 0 ]; then
+		bad "$p 不在 package/ 里 —— clone 了吗？"
+	elif [ "$n" -gt 1 ]; then
+		bad "$p 有 $n 份 —— 会和另一份打架"
+		printf '%s\n' "$matches" | sed 's/^/        /'
 	else
-		bad "$p 不在 package/feeds/ —— 跑过 install-into-tree.sh 吗？"
+		ok "$p → $matches"
 	fi
 done
 echo "     （shadowsocks-libev-ss-* 是 shadowsocks-c 的子包，不单独出现在这里）"
@@ -76,18 +99,20 @@ echo "     （shadowsocks-libev-ss-* 是 shadowsocks-c 的子包，不单独出�
 echo
 echo "[2] 同名遮蔽（ImmortalWrt 自带 passwall 时的头号坑）"
 for p in luci-app-passwall hysteria dns2tcp; do
-	matches=$(ls -d package/feeds/*/"$p" 2>/dev/null)
+	matches=$(locate "$p")
 	n=$(printf '%s\n' "$matches" | grep -c . 2>/dev/null || echo 0)
 	if [ "$n" -eq 0 ]; then
 		bad "$p 未安装"
 	elif [ "$n" -gt 1 ]; then
-		bad "$p 装了 $n 份 —— 官方 feed 和本仓库同时存在，会打架"
-		echo "        现有：$(echo "$matches" | tr '\n' ' ')"
-	elif printf '%s' "$matches" | grep -q "/p455w4ll/"; then
-		ok "$p 来自本仓库"
+		bad "$p 装了 $n 份 —— 官方 feed 和你的同时存在，会打架"
+		printf '%s\n' "$matches" | sed 's/^/        /'
+	elif is_ours "$matches"; then
+		ok "$p 来自 $matches"
 	else
 		bad "$p 来自 $matches —— 被同名遮蔽了，编出来不是你想要的版本"
-		echo "        修法：重跑 install-into-tree.sh"
+		echo "        修法：rm -rf feeds/luci/applications/luci-app-passwall"
+		echo "              rm -rf feeds/packages/net/hysteria feeds/packages/net/dns2tcp"
+		echo "              然后重新 clone 到 package/"
 	fi
 done
 
@@ -158,16 +183,16 @@ fi
 # ---------------------------------------------------------------- 6. hysteria
 echo
 echo "[6] hysteria 版本"
-HYS_MK=$(ls package/feeds/*/hysteria/Makefile 2>/dev/null | head -1)
-if [ -z "$HYS_MK" ]; then
+HYS_DIR=$(locate hysteria | head -1)
+if [ -z "$HYS_DIR" ] || [ ! -f "$HYS_DIR/Makefile" ]; then
 	bad "找不到 hysteria 的 Makefile"
 else
-	HYS_VER=$(sed -n 's/^PKG_VERSION:=//p' "$HYS_MK" | head -1 | tr -d '\r')
+	HYS_VER=$(sed -n 's/^PKG_VERSION:=//p' "$HYS_DIR/Makefile" | head -1 | tr -d '\r')
 	case "$HYS_VER" in
 		1.*) ok "hysteria $HYS_VER（v1，与 util_hysteria.lua 的配置格式配套）" ;;
 		*)
 			bad "hysteria $HYS_VER —— 不是 v1。v2 的配置格式与 util_hysteria.lua 不兼容"
-			echo "        修法：重跑 install-into-tree.sh"
+			echo "        说明拿到的是官方 feed 的版本，不是本仓库的"
 			;;
 	esac
 fi
@@ -175,29 +200,35 @@ fi
 # ---------------------------------------------------------------- 7. CRLF
 echo
 echo "[7] 换行符（CRLF 会让 init.d 静默失效）"
-INIT_F=$(ls package/feeds/*/luci-app-passwall/root/etc/init.d/passwall 2>/dev/null | head -1)
-if [ -z "$INIT_F" ]; then
+PW_DIR=$(locate luci-app-passwall | head -1)
+INIT_F="$PW_DIR/root/etc/init.d/passwall"
+if [ -z "$PW_DIR" ] || [ ! -f "$INIT_F" ]; then
 	bad "找不到 init.d/passwall"
 elif grep -q "$(printf '\r')" "$INIT_F" 2>/dev/null; then
 	bad "init.d/passwall 是 CRLF —— rc.common 会完全无法解析它"
 	echo "        表现：镜像构建时 Configuring luci-app-passwall 之后 opkg 只报 Error 255"
-	echo "        修法：重跑 install-into-tree.sh"
+	echo "        修法：find -L $PW_DIR -type f -exec sed -i 's/\r\$//' {} +"
 else
 	ok "init.d/passwall 是 LF"
 fi
 
-# ---------------------------------------------------------------- 8. 可复现性
+# ---------------------------------------------------------------- 8. 来源固定
 echo
-echo "[8] 可复现性"
+echo "[8] 版本固定"
 if grep -qE "^src-git p455w4ll .*\^[0-9a-f]{7,}" feeds.conf 2>/dev/null; then
-	ok "本仓库 feed 已钉到具体 commit"
+	ok "feed 方式，已钉到具体 commit"
 elif grep -qE "^src-git p455w4ll " feeds.conf 2>/dev/null; then
-	warn "本仓库 feed 跟分支（;main）—— 上游一改，你的固件内容就变"
-	echo "        要复现构建就把 ;main 换成 ^<commit>"
+	warn "feed 跟分支（;main）—— 上游一改，你的固件内容就变"
+	echo "        要复现就把 ;main 换成 ^<commit>"
 elif grep -qE "^src-link p455w4ll " feeds.conf 2>/dev/null; then
-	warn "本仓库 feed 用 src-link 指向本地目录（开发模式，不适合正式固件）"
+	warn "feed 用 src-link 指向本地目录（开发模式，不适合正式固件）"
+elif [ -n "$PW_DIR" ] && [ -d "$(dirname "$PW_DIR")/.git" ]; then
+	CLONE_DIR=$(dirname "$PW_DIR")
+	REV=$(git -C "$CLONE_DIR" rev-parse --short HEAD 2>/dev/null || echo "?")
+	warn "$CLONE_DIR 是 git clone 进来的，当前 $REV"
+	echo "        要复现就 git -C $CLONE_DIR checkout <commit>"
 else
-	bad "feeds.conf 里没有 p455w4ll"
+	skip "无法判断版本来源"
 fi
 
 # ---------------------------------------------------------------- 汇总

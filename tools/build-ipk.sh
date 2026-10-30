@@ -30,6 +30,8 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 SDK_BASE="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/${SDK_TARGET}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# 仓库根目录：包目录（shadowsocks-c / hysteria / dns2tcp / luci-app-passwall）都在根下
+ROOT="$(cd "$HERE/.." && pwd)"
 
 # 期望产出的包数，用于最后断言。加包时记得改这里。
 EXPECT_PKGS=12
@@ -131,10 +133,10 @@ mark
 log "放入 vendor 包"
 for d in shadowsocks-c hysteria dns2tcp; do
 	rm -rf "package/$d"
-	cp -r "$HERE/$d" "package/$d"
+	cp -r "$ROOT/$d" "package/$d"
 done
 
-SRC_PW="${PASSWALL_SRC:-$HERE/../luci-app-passwall}"
+SRC_PW="${PASSWALL_SRC:-$ROOT/luci-app-passwall}"
 if [ -d "$SRC_PW" ]; then
 	log "放入 luci-app-passwall（$SRC_PW）"
 	rm -rf package/luci-app-passwall
