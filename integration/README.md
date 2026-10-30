@@ -66,6 +66,12 @@ chmod 755 feeds/p455w4ll/root/etc/init.d/* \
 - 只 `rm` 不 `install -p` → 官方没了，你的也没装（`feeds install -a` 早跑完了）
 - 只 `install -p` 不 `rm` → 这次能装上，但以后谁再跑一次 `feeds install -a` 就被顶回去
 
+> **顺序陷阱：配置必须在这一步之后加，不能之前。**
+>
+> `scripts/feeds uninstall` 内部会触发一次 `make defconfig`。那一刻包刚被移除，`.config` 里 `CONFIG_PACKAGE_luci-app-passwall=y` 就成了未知符号，被 defconfig 直接丢掉。等你 `install -p` 装回来，`.config` 里已经没有这行了 —— 结果就是「包装好了但没选中」。
+>
+> 我第一次测就是这么翻车的：先加配置、再处理遮蔽，最后 `verify.sh` 报三个包 `没选中`。改成先处理遮蔽、再加配置，30 项立刻全绿。
+
 ### 第三步：加配置
 
 ```sh
@@ -247,7 +253,8 @@ cf2e235  remove unused packages - shadowsocks-libev - trojan-plus - tuic-client
 
 在 `immortalwrt/immortalwrt` 的 `openwrt-24.10` 分支上验证过：
 
-- 4 个包（luci-app-passwall / shadowsocks-c / hysteria / dns2tcp）正确落到 `package/feeds/p455w4ll/`
+- 4 个包（luci-app-passwall / shadowsocks-c / hysteria / dns2tcp）正确落到 `package/feeds/p455w4ll/`，版本分别是 4.70-5 / 3.3.6 / 1.3.5 / 1.1.2
 - 12 个依赖（luci-compat / luci-lua-runtime / luci-lib-jsonc / libuci-lua / coreutils* / ip-full / resolveip / unzip / curl / lua）ImmortalWrt 全部提供
-- `make defconfig` 通过，30 项校验全绿
+- `make defconfig` 通过，`verify.sh` **30 项全绿**
 - menuconfig 路径：`LuCI → 3. Applications → luci-app-passwall`，20 个子选项齐全
+- 反向验证：故意制造「两个 Transparent_Proxy 都没开」「dnsmasq 冲突」「init.d 是 CRLF」三个错误，`verify.sh` 全部抓到并给出修法
