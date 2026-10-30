@@ -4,6 +4,17 @@
 
 编译发生在**你的 ImmortalWrt 源码树**里，不是这里。
 
+## 适用版本
+
+| | 状态 |
+|---|---|
+| ImmortalWrt **24.10**（`openwrt-24.10` 分支） | **已验证**，本文所有结论都基于它 |
+| ImmortalWrt 25.12 / master | 未验证，不建议 |
+
+不碰 25.12 的理由不是懒：`luci-app-passwall` 4.70-5 是 **Lua CBI** 应用，依赖 `luci-compat` 和 `luci-lua-runtime`。25.12 的 LuCI 在往纯 JS 迁移，这两个包能不能留、留到什么程度都是未知数。主路由要长期稳定跑，追新分支是负收益。
+
+24.10 是 LTS 线，配套的 `luci-compat` / `luci-lua-runtime` 都在（本文实测确认）。
+
 ## 先说最要命的一件事：ImmortalWrt 自带 PassWall
 
 ImmortalWrt 的 feeds 里**已经有 PassWall 了**，而且是更新的版本。实测：
@@ -251,10 +262,49 @@ cf2e235  remove unused packages - shadowsocks-libev - trojan-plus - tuic-client
 
 ## 实测记录
 
-在 `immortalwrt/immortalwrt` 的 `openwrt-24.10` 分支上验证过：
+在 `immortalwrt/immortalwrt` 的 `openwrt-24.10` 分支、x86/64、14 核容器里**完整编译过一次**（不是只跑到配置层）：
 
-- 4 个包（luci-app-passwall / shadowsocks-c / hysteria / dns2tcp）正确落到 `package/feeds/p455w4ll/`，版本分别是 4.70-5 / 3.3.6 / 1.3.5 / 1.1.2
+**耗时 20 分 52 秒**，产物 6 个镜像 + manifest，共 145M：
+
+```
+immortalwrt-x86-64-generic-squashfs-combined.img.gz       24M   ← 写盘用
+immortalwrt-x86-64-generic-squashfs-combined-efi.img.gz   25M
+immortalwrt-x86-64-generic-ext4-combined.img.gz           29M
+immortalwrt-x86-64-generic-ext4-rootfs.img.gz             23M
+```
+
+**manifest（290 个包）里的 PassWall 相关**：
+
+```
+luci-app-passwall - 4.70-5              ← 我们的，不是 ImmortalWrt 自带的 25.12.16
+hysteria - 1.3.5-r1                     ← 我们的 v1，不是 feed 里的 v2
+shadowsocks-libev-ss-local - 3.3.6-r1   ← 我们的 ss-c
+shadowsocks-libev-ss-redir - 3.3.6-r1
+shadowsocks-libev-ss-server - 3.3.6-r1
+dns2tcp - 1.1.2-r1
+dnsmasq-full - 2.93-r1
+chinadns-ng - 2025.08.09-r1
+dns2socks - 2.1-r2
+microsocks - 1.0.5-r2
+tcping - 2020.07.04~db910183-r1
+ipt2socks - 1.1.4-r2
+```
+
+镜像 rootfs 里 PassWall 相关文件 **125 个**，关键项：
+
+| 检查项 | 结果 |
+|---|---|
+| `/usr/bin/ss-redir` `/ss-local` `/ss-server` | 存在 |
+| `/usr/bin/hysteria` `/dns2tcp` | 存在 |
+| `/etc/init.d/passwall` + `/etc/rc.d/S99passwall` | 存在（开机自启已建立）|
+| `/etc/uci-defaults/luci-passwall` | 存在（首次启动生成 `/etc/config/passwall`）|
+| 内核模块 `nft_tproxy` `nft_socket` `nft_nat` | 3 个齐全 |
+
+`/etc/config/passwall` 不在镜像里是正常的 —— 镜像构建阶段 `IPKG_INSTROOT` 非空，`default_postinst` 会跳过 uci-defaults，配置由首次开机生成。
+
+**其他验证**：
+
 - 12 个依赖（luci-compat / luci-lua-runtime / luci-lib-jsonc / libuci-lua / coreutils* / ip-full / resolveip / unzip / curl / lua）ImmortalWrt 全部提供
-- `make defconfig` 通过，`verify.sh` **30 项全绿**
 - menuconfig 路径：`LuCI → 3. Applications → luci-app-passwall`，20 个子选项齐全
+- `verify.sh` **30 项全绿**
 - 反向验证：故意制造「两个 Transparent_Proxy 都没开」「dnsmasq 冲突」「init.d 是 CRLF」三个错误，`verify.sh` 全部抓到并给出修法
