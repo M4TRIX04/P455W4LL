@@ -1,0 +1,36 @@
+# ============================================================================
+# 追加到你的 ImmortalWrt / OpenWrt 源码树的 feeds.conf
+#
+# 用法：
+#   cp feeds.conf.default feeds.conf
+#   cat integration/feeds.conf.fragment >> feeds.conf
+#
+# 注意：ImmortalWrt 的 feeds.conf.default 里**没有 base feed**（基础包在源码树
+# 的 package/ 里），所以直接追加这两行就行，不用像 SDK 那样补 base。
+#
+# 顺序：p455w4ll 要在 passwall_packages 前面。
+# 但光靠顺序不够 —— ImmortalWrt 自带的 luci/packages feed 里已经有
+# luci-app-passwall / hysteria / dns2tcp，会把你的一起遮蔽掉。
+# 必须按 integration/README.md 的第二步做显式处理。
+# ============================================================================
+
+# 本仓库：luci-app-passwall 4.70-5 + vendor 的 shadowsocks-c / hysteria v1 / dns2tcp
+src-git p455w4ll https://github.com/M4TRIX04/P455W4LL.git;main
+
+# 上游二进制 feed：提供 chinadns-ng / dns2socks / tcping / ipt2socks
+# 这四个官方 openwrt/packages 里都没有，是 luci-app-passwall 的硬依赖
+# （ImmortalWrt 的 packages feed 里倒是有，装了 ImmortalWrt 的话这行可以省，
+#   但保留能保证换回原版 OpenWrt 时也能用）
+src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
+
+# ---------------------------------------------------------------------------
+# 要可复现构建就把分支换成 commit：把 ;main 改成 ^<commit>
+#
+#   src-git p455w4ll https://github.com/M4TRIX04/P455W4LL.git^<commit>
+#   src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git^<commit>
+#
+# 上游 openwrt-passwall-packages 已经删过一批包：
+#   cf2e235  remove unused packages - shadowsocks-libev - trojan-plus - tuic-client
+#   6d4bc0f  remove packages that are no longer needed for passwall
+# 钉住 commit 才能保证同样的配置编出同样的东西。
+# ---------------------------------------------------------------------------
