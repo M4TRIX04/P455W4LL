@@ -15,12 +15,15 @@ local function option_name(name)
 end
 
 local ss_encrypt_method_list = {
-	"rc4-md5", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr",
-	"aes-192-ctr", "aes-256-ctr", "bf-cfb", "camellia-128-cfb",
-	"camellia-192-cfb", "camellia-256-cfb", "salsa20", "chacha20",
-	"chacha20-ietf", -- aead
-	"aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305",
-	"xchacha20-ietf-poly1305"
+	-- 只保留实际会用的算法。删掉的及原因（客户端 10 个，服务端多 3 个 camellia）：
+	--   rc4-md5 / salsa20 / chacha20 / chacha20-ietf   非 AEAD，已废弃，有已知弱点
+	--   aes-128-ctr / aes-192-ctr / aes-256-ctr        非 AEAD，CTR 模式有已知弱点
+	--   bf-cfb                                        Blowfish，老旧
+	--   aes-192-gcm                                   192 位极少使用，部分实现不支持
+	--   xchacha20-ietf-poly1305                       属 Shadowsocks 2022，本体系不用
+	--   camellia-128/192/256-cfb（仅服务端）           日系算法，实际无人使用
+	"aes-128-cfb", "aes-192-cfb", "aes-256-cfb",
+	"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"
 }
 
 -- [[ Shadowsocks ]]
