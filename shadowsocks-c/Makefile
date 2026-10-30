@@ -43,6 +43,9 @@ CMAKE_OPTIONS += \
 # 因此必须给 CMAKE_PREFIX_PATH，否则 find_package 找不到。
 # SS_ENABLE_REGEX 关掉是因为 PassWall 不使用 ACL 正则，可省掉 PCRE2 依赖。
 
+# 只产出 local / redir / server 三个子包。
+# ss-tunnel 和 ss-manager 在 luci-app-passwall 里零引用，已删除。
+
 define Package/shadowsocks-libev-ss-local
   SECTION:=net
   CATEGORY:=Network
@@ -70,24 +73,6 @@ define Package/shadowsocks-libev-ss-server
   DEPENDS:=+libuv +libcares +libsodium +libmbedtls +libstdcpp +libpthread
 endef
 
-define Package/shadowsocks-libev-ss-tunnel
-  SECTION:=net
-  CATEGORY:=Network
-  SUBMENU:=Web Servers/Proxies
-  TITLE:=SS Tunnel (shadowsocks-c $(PKG_VERSION))
-  URL:=https://github.com/shadowsocks/shadowsocks-c
-  DEPENDS:=+libuv +libcares +libsodium +libmbedtls +libstdcpp +libpthread
-endef
-
-define Package/shadowsocks-libev-ss-manager
-  SECTION:=net
-  CATEGORY:=Network
-  SUBMENU:=Web Servers/Proxies
-  TITLE:=SS Manager (shadowsocks-c $(PKG_VERSION))
-  URL:=https://github.com/shadowsocks/shadowsocks-c
-  DEPENDS:=+libuv +libcares +libsodium +libmbedtls +libstdcpp +libpthread
-endef
-
 define Package/shadowsocks-libev-ss-local/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/ss-local $(1)/usr/bin/
@@ -103,18 +88,6 @@ define Package/shadowsocks-libev-ss-server/install
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/ss-server $(1)/usr/bin/
 endef
 
-define Package/shadowsocks-libev-ss-tunnel/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/ss-tunnel $(1)/usr/bin/
-endef
-
-define Package/shadowsocks-libev-ss-manager/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/ss-manager $(1)/usr/bin/
-endef
-
 $(eval $(call BuildPackage,shadowsocks-libev-ss-local))
 $(eval $(call BuildPackage,shadowsocks-libev-ss-redir))
 $(eval $(call BuildPackage,shadowsocks-libev-ss-server))
-$(eval $(call BuildPackage,shadowsocks-libev-ss-tunnel))
-$(eval $(call BuildPackage,shadowsocks-libev-ss-manager))

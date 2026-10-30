@@ -34,7 +34,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 
 # 期望产出的包数，用于最后断言。加包时记得改这里。
-EXPECT_PKGS=12
+EXPECT_PKGS=10
 
 START_TS=$(date +%s)
 MARK_TS=$START_TS
@@ -196,8 +196,6 @@ cat >> .config <<'EOF'
 CONFIG_PACKAGE_shadowsocks-libev-ss-local=m
 CONFIG_PACKAGE_shadowsocks-libev-ss-redir=m
 CONFIG_PACKAGE_shadowsocks-libev-ss-server=m
-CONFIG_PACKAGE_shadowsocks-libev-ss-tunnel=m
-CONFIG_PACKAGE_shadowsocks-libev-ss-manager=m
 CONFIG_PACKAGE_hysteria=m
 CONFIG_PACKAGE_dns2tcp=m
 EOF
