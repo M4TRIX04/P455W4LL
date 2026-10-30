@@ -79,4 +79,9 @@ for index, value in ipairs(type_table) do
 	setfenv(p_func, getfenv(1))(m, s)
 end
 
+-- 保存后重启服务。改节点地址/端口/密码不重启就不生效，和 global.lua 同一个问题。
+function m.on_after_commit(self)
+	luci.sys.call("/etc/init.d/passwall restart > /dev/null 2>&1 &")
+end
+
 return m

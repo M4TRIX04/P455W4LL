@@ -548,6 +548,17 @@ for k, v in pairs(nodes_table) do
 	end
 end
 
+-- 保存后重启服务。
+-- 上游没有这个钩子（master / v4.70-5 都没有），导致两个方向都失效：
+--   关掉主开关 → 保存 → 服务还在跑
+--   打开主开关 → 保存 → 服务没起来
+-- 只有手动 /etc/init.d/passwall restart 或重启机器才生效。
+-- 代价是每次保存都会重启一次，正在用的连接会断几秒；
+-- 但「以为改了其实没改」比断几秒危险得多。
+function m.on_after_commit(self)
+	luci.sys.call("/etc/init.d/passwall restart > /dev/null 2>&1 &")
+end
+
 m:append(Template(appname .. "/global/footer"))
 
 return m
