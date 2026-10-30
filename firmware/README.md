@@ -188,6 +188,25 @@ sha256sums
 | `/usr/lib/lua/luci/model/cbi/passwall/` | 存在（121 个文件里含全套 CBI）|
 | 内核模块 `nft_tproxy.ko` `nft_socket.ko` `nft_nat.ko` | 存在 |
 
+最硬的证据是 `openwrt-x86-64-generic.manifest`（镜像内 219 个包的清单）：
+
+```
+chinadns-ng - 2025.08.09-r1
+dns2socks - 2.1-r3
+dns2tcp - 1.1.2-r1
+dnsmasq-full - 2.93-r1
+hysteria - 1.3.5-r1
+ipt2socks - 1.1.4-r3
+luci-app-passwall - 4.70-5
+microsocks - 1.0.5-r2
+shadowsocks-libev-ss-local - 3.3.6-r1
+shadowsocks-libev-ss-redir - 3.3.6-r1
+shadowsocks-libev-ss-server - 3.3.6-r1
+tcping - 0.3-r1
+```
+
+`hysteria` 是 **1.3.5**（v1，不是 feed 里的 v2），`shadowsocks-libev-ss-*` 是 **3.3.6**（我们的 ss-c）。两个 vendor 包都按预期进了镜像。
+
 `/etc/config/passwall` **不在**镜像里是正常的 —— 它由 `/etc/uci-defaults/luci-passwall` 在首次开机时生成。镜像构建阶段 uci-defaults 不会执行（`IPKG_INSTROOT` 非空时 `default_postinst` 会跳过那段）。
 
 ## 输出与刷写

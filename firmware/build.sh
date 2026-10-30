@@ -237,8 +237,10 @@ mkdir -p "$OUT"
 IMG_DIR="bin/targets/$TARGET"
 [ -d "$IMG_DIR" ] || die "找不到产物目录 $IMG_DIR"
 
-# 只挑能直接烧写/导入的镜像，跳过 packages/ 和中间文件
-for pat in '*.img.gz' '*.img' '*.iso' '*.vmdk' '*.qcow2' '*.bin' 'sha256sums'; do
+# 只挑能直接烧写/导入的镜像，跳过 packages/ 和中间文件。
+# buildinfo / manifest 也带上 —— 它们记录了这次构建用的精确配置和 feed 提交，
+# 是「这个镜像到底是什么」的唯一凭据，而且 sha256sums 里本来就引用了它们。
+for pat in '*.img.gz' '*.img' '*.iso' '*.vmdk' '*.qcow2' '*.bin' '*.buildinfo' '*.manifest' 'sha256sums'; do
 	find "$IMG_DIR" -maxdepth 1 -name "$pat" -exec cp -f {} "$OUT/" \; 2>/dev/null || true
 done
 
