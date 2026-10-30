@@ -35,8 +35,19 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 EXPECT_PKGS=12
 
 START_TS=$(date +%s)
+MARK_TS=$START_TS
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf '\n!! %s\n' "$*" >&2; exit 1; }
+
+# 每个阶段结束时打一行耗时。CI 日志里能直接看出时间花在哪一步，
+# 不用靠猜是「缓存没命中」还是「runner 慢」。
+mark() {
+	_now=$(date +%s)
+	printf '    ↳ 本阶段 %d 分 %02d 秒（累计 %d 分 %02d 秒）\n' \
+		$(( (_now - MARK_TS) / 60 )) $(( (_now - MARK_TS) % 60 )) \
+		$(( (_now - START_TS) / 60 )) $(( (_now - START_TS) % 60 ))
+	MARK_TS=$_now
+}
 
 # 优先 curl，其次 wget
 fetch() {
@@ -82,6 +93,7 @@ else
 	log "复用已有 SDK（sdk/scripts/feeds 存在）"
 fi
 cd sdk
+mark
 
 # ---------------------------------------------------------------- 2. feeds
 # 必须包含 base feed —— SDK 的基础包（lua/ucode/libnl-tiny）来自它，不在 package/ 里
@@ -113,6 +125,8 @@ fi
 # microsocks 官方 feed 里就有，且是同一个上游项目（1.0.5），直接用即可，
 # 编译路径是 package/feeds/packages/microsocks（不是 passwall_packages）。
 
+mark
+
 # ---------------------------------------------------------------- 3. vendor
 log "放入 vendor 包"
 for d in shadowsocks-c hysteria dns2tcp; do
@@ -135,6 +149,8 @@ if [ -d "$SRC_PW" ]; then
 else
 	die "找不到 luci-app-passwall 源码：$SRC_PW"
 fi
+
+mark
 
 # ---------------------------------------------------------------- 4. 配置
 log "生成 .config"
@@ -184,6 +200,8 @@ CONFIG_PACKAGE_hysteria=m
 CONFIG_PACKAGE_dns2tcp=m
 EOF
 
+mark
+
 # ---------------------------------------------------------------- 5. 编译
 V=""
 [ "$BUILD_VERBOSE" = "1" ] && V="V=s"
@@ -198,12 +216,14 @@ for p in lua ucode libnl-tiny; do
 		make "package/feeds/base/$p/compile" -j"$JOBS" $V
 	fi
 done
+mark
 
 log "编译主包与 vendor 包"
 for p in luci-app-passwall shadowsocks-c hysteria dns2tcp; do
 	echo "--> $p"
 	make "package/$p/compile" -j"$JOBS" $V
 done
+mark
 
 log "编译运行时依赖"
 for p in chinadns-ng dns2socks tcping; do
@@ -213,6 +233,7 @@ done
 # microsocks 官方 packages feed 里也有，feeds install 装的是官方那个
 echo "--> microsocks"
 make "package/feeds/packages/microsocks/compile" -j"$JOBS" $V
+mark
 
 # ---------------------------------------------------------------- 6. 收集
 log "收集产物"
@@ -231,6 +252,7 @@ find bin/packages \( \
 
 N=$(find "$WORK/out" -name '*.ipk' | wc -l)
 ls -lh "$WORK/out"
+mark
 
 if [ "$N" -ne "$EXPECT_PKGS" ]; then
 	die "产物数量不对：期望 $EXPECT_PKGS 个，实际 $N 个。缺包说明某个 make 步骤没产出，检查上面的日志。"

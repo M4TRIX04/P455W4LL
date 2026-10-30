@@ -135,6 +135,7 @@ jobs:
 
       - name: 构建
         run: |
+          echo "feeds 缓存命中: ${{ steps.cache.outputs.cache-hit }}"
           chmod +x vendor/build.sh
           ./vendor/build.sh "$WORK"
 
