@@ -9,15 +9,27 @@ m = Map(appname)
 s = m:section(TypedSection, "global_other")
 s.anonymous = true
 
-o = s:option(MultiValue, "nodes_ping", " ")
-o:value("auto_ping", translate("Auto Ping"), translate("This will automatically ping the node for latency"))
-o:value("tcping", translate("Tcping"), translate("This will use tcping replace ping detection of node"))
-o:value("info", translate("Show server address and port"), translate("Show server address and port"))
+o = s:option(ListValue, "auto_detection_time", translate("Automatic detection delay"))
+o:value("0", translate("Close"))
+o:value("icmp", "Ping")
+o:value("tcping", "TCP Ping")
+-- 老配置只有 nodes_ping 时按它推导，界面上要显示推导出来的值
+function o.cfgvalue(self, s)
+	return (api.get_ping_config())
+end
+
+o = s:option(Flag, "show_node_info", translate("Show server address and port"))
+o.default = "0"
+o.rmempty = false
+function o.cfgvalue(self, s)
+	local _, info = api.get_ping_config()
+	return info
+end
 
 -- [[ Add the node via the link ]]--
 s:append(Template(appname .. "/node_list/link_add_node"))
 
-local nodes_ping = m:get("@global_other[0]", "nodes_ping") or ""
+local ping_mode, show_info = api.get_ping_config()
 
 -- [[ Node List ]]--
 s = m:section(TypedSection, "nodes")
@@ -113,7 +125,7 @@ o.cfgvalue = function(t, n)
 	local port = m:get(n, "port") or ""
 	str = str .. translate(type) .. "：" .. remarks
 	if address ~= "" and port ~= "" then
-		if nodes_ping:find("info") then
+		if show_info == "1" then
 			if datatypes.ip6addr(address) then
 				str = str .. string.format("（[%s]:%s）", address, port)
 			else
@@ -132,7 +144,7 @@ o.width = "8%"
 o.rawhtml = true
 o.cfgvalue = function(t, n)
 	local result = "---"
-	if not nodes_ping:find("auto_ping") then
+	if ping_mode == "0" then
 		result = string.format('<span class="ping"><a href="javascript:void(0)" onclick="javascript:ping_node(\'%s\',this)">Ping</a></span>', n)
 	else
 		result = string.format('<span class="ping_value" cbiid="%s">---</span>', n)

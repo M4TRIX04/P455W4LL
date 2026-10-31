@@ -284,7 +284,7 @@ function get_domain_from_url(url)
 end
 
 function get_valid_nodes()
-	local nodes_ping = uci_get_type("global_other", "nodes_ping") or ""
+	local _, show_info = get_ping_config()
 	local nodes = {}
 	uci:foreach(appname, "nodes", function(e)
 		e.id = e[".name"]
@@ -311,7 +311,7 @@ function get_valid_nodes()
 					end
 					if is_ipv6(address) then address = get_ipv6_full(address) end
 					e["remark"] = "%s：[%s]" % {type, e.remarks}
-					if nodes_ping:find("info") then
+					if show_info == "1" then
 						e["remark"] = "%s：[%s] %s:%s" % {type, e.remarks, address, e.port}
 					end
 					e.node_type = "normal"
@@ -375,6 +375,31 @@ function uci_get_type(type, config, default)
 		value = default
 	end
 	return value
+end
+
+
+-- 自动探测配置。新版用 auto_detection_time + show_node_info 两个键，
+-- 老配置只有 nodes_ping 列表，这里按它推导，保证升级后行为不变。
+function get_ping_config()
+	local legacy = uci_get_type("global_other", "nodes_ping") or ""
+	local mode = uci_get_type("global_other", "auto_detection_time") or ""
+	local info = uci_get_type("global_other", "show_node_info") or ""
+
+	if mode == "" then
+		if not legacy:find("auto_ping") then
+			mode = "0"
+		elseif legacy:find("tcping") then
+			mode = "tcping"
+		else
+			mode = "icmp"
+		end
+	end
+
+	if info == "" then
+		info = legacy:find("info") and "1" or "0"
+	end
+
+	return mode, info
 end
 
 function uci_get_type_id(id, config, default)

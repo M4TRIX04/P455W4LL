@@ -248,8 +248,8 @@ function ping_node()
 	local port = luci.http.formvalue("port")
 	local e = {}
 	e.index = index
-	local nodes_ping = ucic:get(appname, "@global_other[0]", "nodes_ping") or ""
-	if nodes_ping:find("tcping") and luci.sys.exec("echo -n $(command -v tcping)") ~= "" then
+	local ping_mode = api.get_ping_config()
+	if ping_mode == "tcping" and luci.sys.exec("echo -n $(command -v tcping)") ~= "" then
 		if api.is_ipv6(address) then
 			address = api.get_ipv6_only(address)
 		end
