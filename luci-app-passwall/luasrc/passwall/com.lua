@@ -8,17 +8,6 @@ local function gh_pre_release_url(self)
 	return "https://api.github.com/repos/" .. self.repo .. "/releases?per_page=1"
 end
 
-_M.brook = {
-	name = "Brook",
-	repo = "txthinking/brook",
-	get_url = gh_release_url,
-	cmd_version = "-v | awk '{print $3}'",
-	zipped = false,
-	default_path = "/usr/bin/brook",
-	match_fmt_str = "linux_%s$",
-	file_tree = {}
-}
-
 _M.hysteria = {
 	name = "Hysteria",
 	repo = "HyNetwork/hysteria",
@@ -30,36 +19,6 @@ _M.hysteria = {
 	file_tree = {
 		armv6 = "arm",
 		armv7 = "arm"
-	}
-}
-
-_M["trojan-go"] = {
-	name = "Trojan-Go",
-	repo = "p4gefau1t/trojan-go",
-	get_url = gh_release_url,
-	cmd_version = "-version | awk '{print $2}' | sed -n 1P",
-	zipped = true,
-	default_path = "/usr/bin/trojan-go",
-	match_fmt_str = "linux%%-%s%%.zip",
-	file_tree = {
-		aarch64 = "armv8",
-		armv8   = "armv8",
-		mips    = "mips%-hardfloat",
-		mipsel  = "mipsle%-hardfloat"
-	}
-}
-
-_M.singbox = {
-	name = "Sing-Box",
-	repo = "SagerNet/sing-box",
-	get_url = gh_pre_release_url,
-	cmd_version = "version | awk '{print $3}' | sed -n 1P",
-	zipped = true,
-	zipped_suffix = "tar.gz",
-	default_path = "/usr/bin/sing-box",
-	match_fmt_str = "linux%%-%s",
-	file_tree = {
-		x86_64 = "amd64"
 	}
 }
 
