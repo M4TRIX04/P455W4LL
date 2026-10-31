@@ -48,7 +48,10 @@ local api = require "luci.passwall.api"
 	function add_node() {
 		var nodes_link = document.getElementById("nodes_link").value;
 		if (nodes_link.trim() != "") {
-			var supports = "ss ssr vmess vless trojan trojan-go hysteria";
+			// 只列还有 type/*.lua 表单的协议：ss / hysteria 直接对应，
+			// vmess、vless 走 Xray。ssr 和 trojan-go 的表单已删，
+			// trojan 的默认后端 trojan-plus 也已删，导入进来都是没法编辑的废节点。
+			var supports = "ss vmess vless hysteria";
 			var itype = nodes_link.split('://')[0];
 			if (itype.trim() != "" && supports.indexOf(itype) >= 0) {
 				ajax_add_node(nodes_link);
