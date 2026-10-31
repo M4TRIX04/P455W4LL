@@ -2,32 +2,13 @@ local api = require "luci.passwall.api"
 local appname = api.appname
 local sys = api.sys
 local has_ss = api.is_finded("ss-redir")
-local has_ss_rust = api.is_finded("sslocal")
-local has_trojan_plus = api.is_finded("trojan-plus")
-local has_singbox = api.finded_com("singbox")
 local has_xray = api.finded_com("xray")
-local has_trojan_go = api.finded_com("trojan-go")
 local ss_aead_type = {}
-local trojan_type = {}
 if has_ss then
 	ss_aead_type[#ss_aead_type + 1] = "shadowsocks-libev"
 end
-if has_ss_rust then
-	ss_aead_type[#ss_aead_type + 1] = "shadowsocks-rust"
-end
-if has_trojan_plus then
-	trojan_type[#trojan_type + 1] = "trojan-plus"
-end
-if has_singbox then
-	trojan_type[#trojan_type + 1] = "sing-box"
-	ss_aead_type[#ss_aead_type + 1] = "sing-box"
-end
 if has_xray then
-	trojan_type[#trojan_type + 1] = "xray"
 	ss_aead_type[#ss_aead_type + 1] = "xray"
-end
-if has_trojan_go then
-	trojan_type[#trojan_type + 1] = "trojan-go"
 end
 
 m = Map(appname)
@@ -72,15 +53,6 @@ if #ss_aead_type > 0 then
 	o.default = "global"
 	o:value("global", translate("Use global config"))
 	for key, value in pairs(ss_aead_type) do
-		o:value(value, translate(value:gsub("^%l",string.upper)))
-	end
-end
-
-if #trojan_type > 0 then
-	o = s:option(ListValue, "trojan_type", translate("Trojan Node Use Type"))
-	o.default = "global"
-	o:value("global", translate("Use global config"))
-	for key, value in pairs(trojan_type) do
 		o:value(value, translate(value:gsub("^%l",string.upper)))
 	end
 end
