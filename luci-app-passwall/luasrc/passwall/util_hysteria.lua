@@ -3,6 +3,20 @@ local api = require "luci.passwall.api"
 local uci = api.uci
 local jsonc = api.jsonc
 
+-- SNI 只能是域名。分享链接/订阅导入时 peer 参数常带端口
+-- （subscribe.lua 里 result.tls_serverName = peer and peer or sni 是原样赋值），
+-- 带端口的 SNI 会让 TLS 证书校验必然失败，这里统一兜一下。
+local function strip_port(host)
+	if not host or host == "" then
+		return host
+	end
+	-- 方括号开头的是 IPv6 字面量，不剥
+	if host:sub(1, 1) == "[" then
+		return host
+	end
+	return (host:gsub(":%d+$", ""))
+end
+
 function gen_config_server(node)
 	local config = {
 		listen = ":" .. node.port,
@@ -64,7 +78,7 @@ function gen_config(var)
 		auth = (node.hysteria_auth_type == "base64") and node.hysteria_auth_password or nil,
 		auth_str = (node.hysteria_auth_type == "string") and node.hysteria_auth_password or nil,
 		alpn = node.hysteria_alpn or nil,
-		server_name = node.tls_serverName,
+		server_name = strip_port(node.tls_serverName),
 		insecure = (node.tls_allowInsecure == "1") and true or false,
 		up_mbps = tonumber(node.hysteria_up_mbps) or 10,
 		down_mbps = tonumber(node.hysteria_down_mbps) or 50,
