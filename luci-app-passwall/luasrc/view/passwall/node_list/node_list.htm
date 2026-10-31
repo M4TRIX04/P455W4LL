@@ -34,14 +34,34 @@ table td, .table .td {
 }
 
 /* nodes_ping 的三个开关（Auto Ping / Tcping / Show server address）排成一行。
-   CBI 的 MultiValue 默认在每项之间插一个 <br>，主题又给每项 30px 高度，
-   三个开关就摊成了三行空白。去掉换行改成横排。 */
-#cbi-passwall-global_other .cbi-value-field br {
-	display: none;
+   CBI 的 MultiValue 把每个选项渲染成 <span class="cbi-checkbox">，项与项之间
+   插一个 <br>；主题再把 .cbi-checkbox 当块级、给 .cbi-value 留大边距，
+   三个开关就摊成三行。这里两件事都做：去掉换行，并强制横排。
+   用 data-name 选（form.js 给选项容器打的属性），不依赖 section 的 DOM id。 */
+.cbi-value[data-name="nodes_ping"] {
+	margin-bottom: 0 !important;
 }
 
-#cbi-passwall-global_other .cbi-value-field .cbi-checkbox {
-	margin-right: 1.5em;
+.cbi-value[data-name="nodes_ping"] .cbi-value-title {
+	display: none !important;
+}
+
+.cbi-value[data-name="nodes_ping"] .cbi-value-field {
+	display: flex !important;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 1.5em;
+}
+
+.cbi-value[data-name="nodes_ping"] .cbi-value-field br {
+	display: none !important;
+}
+
+.cbi-value[data-name="nodes_ping"] .cbi-checkbox {
+	display: inline-flex !important;
+	align-items: center;
+	height: auto !important;
+	margin: 0 !important;
 }
 </style>
 
