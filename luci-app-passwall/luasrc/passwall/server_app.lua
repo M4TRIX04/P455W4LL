@@ -142,7 +142,7 @@ local function start()
 				bin = ln_run(api.get_app_path("xray"), "xray", "run -c " .. config_file, log_path)
 			elseif type == "Hysteria" then
 				config = require(require_dir .. "util_hysteria").gen_config_server(user)
-				bin = ln_run(api.get_app_path("hysteria"), "hysteria", "-c " .. config_file .. " server", log_path)
+				bin = ln_run(api.get_app_path("hysteria") or "/usr/bin/hysteria", "hysteria", "-c " .. config_file .. " server", log_path)
 			end
 
 			if next(config) then

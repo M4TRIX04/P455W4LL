@@ -5,6 +5,12 @@ local datatypes = api.datatypes
 
 m = Map(appname)
 
+-- CBI 保存后会在同一请求里重新渲染，这里必须用 Map 的游标取值，
+-- 用 api 模块里的游标会读到保存前的旧值。
+local function cfg_get(opt)
+	return m:get("@global_other[0]", opt)
+end
+
 -- [[ Other Settings ]]--
 s = m:section(TypedSection, "global_other")
 s.anonymous = true
@@ -15,21 +21,19 @@ o:value("icmp", "Ping")
 o:value("tcping", "TCP Ping")
 -- 老配置只有 nodes_ping 时按它推导，界面上要显示推导出来的值
 function o.cfgvalue(self, s)
-	return (api.get_ping_config())
+	return (api.get_ping_config(cfg_get))
 end
 
 o = s:option(Flag, "show_node_info", translate("Show server address and port"))
 o.default = "0"
 o.rmempty = false
 function o.cfgvalue(self, s)
-	local _, info = api.get_ping_config()
+	local _, info = api.get_ping_config(cfg_get)
 	return info
 end
 
 -- [[ Add the node via the link ]]--
 s:append(Template(appname .. "/node_list/link_add_node"))
-
-local ping_mode, show_info = api.get_ping_config()
 
 -- [[ Node List ]]--
 s = m:section(TypedSection, "nodes")
@@ -125,6 +129,7 @@ o.cfgvalue = function(t, n)
 	local port = m:get(n, "port") or ""
 	str = str .. translate(type) .. "：" .. remarks
 	if address ~= "" and port ~= "" then
+		local _, show_info = api.get_ping_config(cfg_get)
 		if show_info == "1" then
 			if datatypes.ip6addr(address) then
 				str = str .. string.format("（[%s]:%s）", address, port)
@@ -144,6 +149,7 @@ o.width = "8%"
 o.rawhtml = true
 o.cfgvalue = function(t, n)
 	local result = "---"
+	local ping_mode = api.get_ping_config(cfg_get)
 	if ping_mode == "0" then
 		result = string.format('<span class="ping"><a href="javascript:void(0)" onclick="javascript:ping_node(\'%s\',this)">Ping</a></span>', n)
 	else

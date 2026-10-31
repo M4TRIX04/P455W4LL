@@ -8,20 +8,6 @@ local function gh_pre_release_url(self)
 	return "https://api.github.com/repos/" .. self.repo .. "/releases?per_page=1"
 end
 
-_M.hysteria = {
-	name = "Hysteria",
-	repo = "HyNetwork/hysteria",
-	get_url = gh_release_url,
-	cmd_version = "version | awk '/^Version:/ {print $2}'",
-	zipped = false,
-	default_path = "/usr/bin/hysteria",
-	match_fmt_str = "linux%%-%s$",
-	file_tree = {
-		armv6 = "arm",
-		armv7 = "arm"
-	}
-}
-
 _M.xray = {
 	name = "Xray",
 	repo = "XTLS/Xray-core",

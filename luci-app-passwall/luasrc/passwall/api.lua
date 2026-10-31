@@ -380,10 +380,13 @@ end
 
 -- 自动探测配置。新版用 auto_detection_time + show_node_info 两个键，
 -- 老配置只有 nodes_ping 列表，这里按它推导，保证升级后行为不变。
-function get_ping_config()
-	local legacy = uci_get_type("global_other", "nodes_ping") or ""
-	local mode = uci_get_type("global_other", "auto_detection_time") or ""
-	local info = uci_get_type("global_other", "show_node_info") or ""
+function get_ping_config(getter)
+	-- 允许调用方传入取值函数：CBI 页面要用 Map 自己的游标，
+	-- 否则「保存后同一请求内渲染」会读到保存前的旧值。
+	getter = getter or function(opt) return uci_get_type("global_other", opt) end
+	local legacy = getter("nodes_ping") or ""
+	local mode = getter("auto_detection_time") or ""
+	local info = getter("show_node_info") or ""
 
 	if mode == "" then
 		if not legacy:find("auto_ping") then
