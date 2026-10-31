@@ -121,6 +121,13 @@ fi
 # feed 里的 hysteria 是 v2，和 vendor 的 v1 同名冲突，必须先卸掉
 ./scripts/feeds uninstall hysteria >/dev/null 2>&1 || true
 
+# 官方 feed 的 shadowsocks-libev 用 foreach 循环定义了和 shadowsocks-c 同名的
+# ss-local / ss-redir / ss-server 三个子包，符号重复会让 make defconfig 报
+#   recursive dependency detected: PACKAGE_shadowsocks-libev-ss-local is selected by itself
+# 并且把这三个符号打回 not set。ss-libev 已由 shadowsocks-c 完全替代（CLI 与
+# JSON 配置格式兼容），卸掉即可，没有别的包依赖它。
+./scripts/feeds uninstall shadowsocks-libev >/dev/null 2>&1 || true
+
 # 关于同名包：官方编译说明会先 rm 掉 feeds/packages/net/{microsocks,...} 再
 # clone 整个 passwall-packages 仓库，因为整仓导入会和官方 feed 的同名包打架。
 # 我们只 vendor 三个包、依赖直接用 feed 里的，所以不需要删 ——
