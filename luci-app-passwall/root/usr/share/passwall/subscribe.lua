@@ -22,14 +22,9 @@ local uci = luci.model.uci.cursor()
 uci:revert(appname)
 
 local has_ss = api.is_finded("ss-redir")
-local has_ss_rust = api.is_finded("sslocal")
-local has_trojan_plus = api.is_finded("trojan-plus")
-local has_singbox = api.finded_com("singbox")
 local has_xray = api.finded_com("xray")
-local has_trojan_go = api.finded_com("trojan-go")
 local allowInsecure_default = nil
 local ss_aead_type_default = uci:get(appname, "@global_subscribe[0]", "ss_aead_type") or "shadowsocks-libev"
-local trojan_type_default = uci:get(appname, "@global_subscribe[0]", "trojan_type") or "trojan-plus"
 -- 判断是否过滤节点关键字
 local filter_keyword_mode_default = uci:get(appname, "@global_subscribe[0]", "filter_keyword_mode") or "0"
 local filter_keyword_discard_list_default = uci:get(appname, "@global_subscribe[0]", "filter_discard_list") or {}
@@ -367,37 +362,9 @@ local function processData(szType, content, add_mode, add_from)
 		add_mode = add_mode, --0为手动配置,1为导入,2为订阅
 		add_from = add_from
 	}
-	--ssr://base64(host:port:protocol:method:obfs:base64pass/?obfsparam=base64param&protoparam=base64param&remarks=base64remarks&group=base64group&udpport=0&uot=0)
-	if szType == 'ssr' then
-		result.type = "SSR"
-
-		local dat = split(content, "/%?")
-		local hostInfo = split(dat[1], ':')
-		if dat[1]:match('%[(.*)%]') then
-			result.address = dat[1]:match('%[(.*)%]')
-		else
-			result.address = hostInfo[#hostInfo-5]
-		end
-		result.port = hostInfo[#hostInfo-4]
-		result.protocol = hostInfo[#hostInfo-3]
-		result.method = hostInfo[#hostInfo-2]
-		result.obfs = hostInfo[#hostInfo-1]
-		result.password = base64Decode(hostInfo[#hostInfo])	
-		local params = {}
-		for _, v in pairs(split(dat[2], '&')) do
-			local t = split(v, '=')
-			params[t[1]] = t[2]
-		end
-		result.obfs_param = base64Decode(params.obfsparam)
-		result.protocol_param = base64Decode(params.protoparam)
-		local group = base64Decode(params.group)
-		if group then result.group = group end
-		result.remarks = base64Decode(params.remarks)
-	elseif szType == 'vmess' then
+	if szType == 'vmess' then
 		local info = jsonParse(content)
-		if has_singbox then
-			result.type = 'sing-box'
-		elseif has_xray then
+		if has_xray then
 			result.type = 'Xray'
 		end
 		result.alter_id = info.aid
@@ -538,14 +505,6 @@ local function processData(szType, content, add_mode, add_from)
 			if aead then
 				if ss_aead_type_default == "shadowsocks-libev" and has_ss then
 					result.type = "SS"
-				elseif ss_aead_type_default == "shadowsocks-rust" and has_ss_rust then
-					result.type = 'SS-Rust'
-					if method:lower() == "chacha20-poly1305" then
-						result.method = "chacha20-ietf-poly1305"
-					end
-				elseif ss_aead_type_default == "sing-box" and has_singbox and not result.plugin then
-					result.type = 'sing-box'
-					result.protocol = 'shadowsocks'
 				elseif ss_aead_type_default == "xray" and has_xray and not result.plugin then
 					result.type = 'Xray'
 					result.protocol = 'shadowsocks'
@@ -562,15 +521,10 @@ local function processData(szType, content, add_mode, add_from)
 				end
 			end
 			if aead2022 then
-				if ss_aead_type_default == "sing-box" and has_singbox and not result.plugin then
-					result.type = 'sing-box'
-					result.protocol = 'shadowsocks'
-				elseif ss_aead_type_default == "xray" and has_xray and not result.plugin then
+				if ss_aead_type_default == "xray" and has_xray and not result.plugin then
 					result.type = 'Xray'
 					result.protocol = 'shadowsocks'
 					result.transport = 'tcp'
-				elseif has_ss_rust then
-					result.type = 'SS-Rust'
 				end
 			end
 		end
@@ -582,7 +536,6 @@ local function processData(szType, content, add_mode, add_from)
 			content = content:sub(0, idx_sp - 1)
 		end
 		result.remarks = UrlDecode(alias)
-		result.type = "Trojan-Plus"
 		if content:find("@") then
 			local Info = split(content, "@")
 			result.password = UrlDecode(Info[1])
@@ -624,11 +577,6 @@ local function processData(szType, content, add_mode, add_from)
 				if params.sspasswd then result.ss_aead_pwd = params.sspasswd end
 			end
 			result.port = port
-			if result.trojan_transport == "ws" or result.ss_aead then
-				result.type = "Trojan-Go"
-				result.fingerprint = "firefox"
-				result.mux = "1"
-			end
 			result.tls = '1'
 			result.tls_serverName = peer and peer or sni
 			if params.allowinsecure then
@@ -642,74 +590,12 @@ local function processData(szType, content, add_mode, add_from)
 				result.tls_allowInsecure = allowInsecure_default and "1" or "0"
 			end
 		end
-		if trojan_type_default == "trojan-plus" and has_trojan_plus then
-			result.type = "Trojan-Plus"
-		elseif trojan_type_default == "sing-box" and has_singbox then
-			result.type = 'sing-box'
-			result.protocol = 'trojan'
-		elseif trojan_type_default == "xray" and has_xray then
-			result.type = 'Xray'
-			result.protocol = 'trojan'
-		elseif trojan_type_default == "trojan-go" and has_trojan_go then
-			result.type = 'Trojan-Go'
+		if not has_xray then
+			log('未安装 Xray，跳过 trojan 节点：' .. tostring(result.remarks))
+			return nil
 		end
-	elseif szType == "trojan-go" then
-		local alias = ""
-		if content:find("#") then
-			local idx_sp = content:find("#")
-			alias = content:sub(idx_sp + 1, -1)
-			content = content:sub(0, idx_sp - 1)
-		end
-		result.remarks = UrlDecode(alias)
-		if has_trojan_go then
-			result.type = "Trojan-Go"
-		end
-		if content:find("@") then
-			local Info = split(content, "@")
-			result.password = UrlDecode(Info[1])
-			local port = "443"
-			Info[2] = (Info[2] or ""):gsub("/%?", "?")
-			local query = split(Info[2], "?")
-			local host_port = query[1]
-			local params = {}
-			for _, v in pairs(split(query[2], '&')) do
-				local t = split(v, '=')
-				params[string.lower(t[1])] = UrlDecode(t[2])
-			end
-			-- [2001:4860:4860::8888]:443
-			-- 8.8.8.8:443
-			if host_port:find(":") then
-				local sp = split(host_port, ":")
-				port = sp[#sp]
-				if api.is_ipv6addrport(host_port) then
-					result.address = api.get_ipv6_only(host_port)
-				else
-					result.address = sp[1]
-				end
-			else
-				result.address = host_port
-			end
-			local peer, sni = nil, ""
-			if params.peer then peer = params.peer end
-			sni = params.sni and params.sni or ""
-			if params.type and params.type == "ws" then
-				result.trojan_transport = "ws"
-				if params.host then result.ws_host = params.host end
-				if params.path then result.ws_path = params.path end
-				if sni == "" and params.host then sni = params.host end
-			end
-			if params.encryption and params.encryption:match('^ss;[^;:]*[;:].*$') then
-				result.ss_aead = "1"
-				result.ss_aead_method, result.ss_aead_pwd = params.encryption:match('^ss;([^;:]*)[;:](.*)$')
-				result.ss_aead_method = string.lower(result.ss_aead_method)
-			end
-			result.port = port
-			result.fingerprint = "firefox"
-			result.tls = "1"
-			result.tls_serverName = peer and peer or sni
-			result.tls_allowInsecure = "0"
-			result.mux = "1"
-		end
+		result.type = 'Xray'
+		result.protocol = 'trojan'
 	elseif szType == "ssd" then
 		result.type = "SS"
 		result.address = content.server
@@ -721,9 +607,6 @@ local function processData(szType, content, add_mode, add_from)
 		result.group = content.airport
 		result.remarks = content.remarks
 	elseif szType == "vless" then
-		if has_singbox then
-			result.type = 'sing-box'
-		end
 		if has_xray then
 			result.type = 'Xray'
 		end
@@ -1233,10 +1116,6 @@ local execute = function()
 			if ss_aead_type ~= "global" then
 				ss_aead_type_default = ss_aead_type
 			end
-			local trojan_type = value.trojan_type or "global"
-			if trojan_type ~= "global" then
-				trojan_type_default = trojan_type
-			end
 			local ua = value.user_agent
 			log('正在订阅:【' .. remark .. '】' .. url)
 			local raw = curl(url, "/tmp/" .. cfgid, ua)
@@ -1255,7 +1134,6 @@ local execute = function()
 			filter_keyword_discard_list_default = uci:get(appname, "@global_subscribe[0]", "filter_discard_list") or {}
 			filter_keyword_keep_list_default = uci:get(appname, "@global_subscribe[0]", "filter_keep_list") or {}
 			ss_aead_type_default = uci:get(appname, "@global_subscribe[0]", "ss_aead_type") or "shadowsocks-libev"
-			trojan_type_default = uci:get(appname, "@global_subscribe[0]", "trojan_type") or "trojan-plus"
 		end
 
 		if #fail_list > 0 then
