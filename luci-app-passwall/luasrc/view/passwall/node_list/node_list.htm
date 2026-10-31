@@ -32,6 +32,17 @@ table td, .table .td {
 .ping a:hover{
 	text-decoration : underline;
 }
+
+/* nodes_ping 的三个开关（Auto Ping / Tcping / Show server address）排成一行。
+   CBI 的 MultiValue 默认在每项之间插一个 <br>，主题又给每项 30px 高度，
+   三个开关就摊成了三行空白。去掉换行改成横排。 */
+#cbi-passwall-global_other .cbi-value-field br {
+	display: none;
+}
+
+#cbi-passwall-global_other .cbi-value-field .cbi-checkbox {
+	margin-right: 1.5em;
+}
 </style>
 
 <script type="text/javascript">
