@@ -15,8 +15,8 @@ TMP_ROUTE_PATH=$TMP_PATH/route
 TMP_ACL_PATH=$TMP_PATH/acl
 TMP_IFACE_PATH=$TMP_PATH/iface
 TMP_PATH2=/tmp/etc/${CONFIG}_tmp
-DNSMASQ_PATH=/etc/dnsmasq.d
-TMP_DNSMASQ_PATH=/tmp/dnsmasq.d/passwall
+DNSMASQ_CONF_DIR=
+TMP_DNSMASQ_PATH=
 LOG_FILE=/tmp/log/$CONFIG.log
 APP_PATH=/usr/share/$CONFIG
 RULES_PATH=/usr/share/${CONFIG}/rules
@@ -1023,12 +1023,11 @@ start_dns() {
 			dnsmasq_version=$(dnsmasq -v | grep -i "Dnsmasq version " | awk '{print $3}')
 			[ "$(expr $dnsmasq_version \>= 2.87)" == 0 ] && echolog "Dnsmasq版本低于2.87，有可能无法正常使用！！！"
 		}
-		source $APP_PATH/helper_dnsmasq.sh stretch
-		lua $APP_PATH/helper_dnsmasq_add.lua -FLAG "default" -TMP_DNSMASQ_PATH ${TMP_DNSMASQ_PATH} \
-			-DNSMASQ_CONF_FILE "/tmp/dnsmasq.d/dnsmasq-passwall.conf" -DEFAULT_DNS ${DEFAULT_DNS} -LOCAL_DNS ${LOCAL_DNS} \
+		lua $APP_PATH/helper_dnsmasq_add.lua -FLAG "default" -TMP_DNSMASQ_PATH "${TMP_DNSMASQ_PATH}" \
+			-DNSMASQ_CONF_FILE "${DNSMASQ_CONF_DIR}/dnsmasq-${CONFIG}.conf" -DEFAULT_DNS ${DEFAULT_DNS} -LOCAL_DNS ${LOCAL_DNS} \
 			-TUN_DNS ${TUN_DNS} -REMOTE_FAKEDNS ${fakedns:-0} -CHNROUTE_MODE_DEFAULT_DNS "${WHEN_CHNROUTE_DEFAULT_DNS:-direct}" -CHINADNS_DNS ${china_ng_listen:-0} \
 			-TCP_NODE ${TCP_NODE} -PROXY_MODE "${TCP_PROXY_MODE}${LOCALHOST_TCP_PROXY_MODE}${ACL_TCP_PROXY_MODE}" -NO_PROXY_IPV6 ${DNSMASQ_FILTER_IPV6:-0} -NFTFLAG ${nftflag:-0} \
-			-NO_LOGIC_LOG ${NO_LOGIC_LOG:-0}
+			-NO_LOGIC_LOG ${NO_LOGIC_LOG:-0} || return 1
 	}
 }
 
@@ -1327,6 +1326,17 @@ acl_app() {
 }
 
 start() {
+	[ "$ENABLED_DEFAULT_ACL" == 1 ] && {
+		source $APP_PATH/helper_dnsmasq.sh get_conf_dir || {
+			echolog "无法确认运行中的 dnsmasq 配置目录，停止启动。"
+			return 1
+		}
+		# Clean the previous location before replacing its single directory record.
+		if [ -f "$TMP_PATH/dnsmasq_conf_dir" ] && [ "$(cat "$TMP_PATH/dnsmasq_conf_dir")" != "$DNSMASQ_CONF_DIR" ]; then
+			del_conf_dir "$(cat "$TMP_PATH/dnsmasq_conf_dir")" || return 1
+		fi
+		printf '%s\n' "$DNSMASQ_CONF_DIR" > "$TMP_PATH/dnsmasq_conf_dir" || return 1
+	}
 	ulimit -n 65535
 	start_haproxy
 	start_socks
@@ -1361,16 +1371,30 @@ start() {
 	[ "$ENABLED_DEFAULT_ACL" == 1 ] && {
 		start_redir TCP
 		start_redir UDP
-		start_dns
+		start_dns || {
+			stop
+			echolog "DNS 配置生成失败，已执行 Passwall 停止清理。"
+			return 1
+		}
 	}
 	[ -n "$USE_TABLES" ] && source $APP_PATH/${USE_TABLES}.sh start
-	[ "$ENABLED_DEFAULT_ACL" == 1 ] && source $APP_PATH/helper_${DNS_N}.sh logic_restart
+	[ "$ENABLED_DEFAULT_ACL" == 1 ] && {
+		source $APP_PATH/helper_${DNS_N}.sh logic_restart || {
+			stop
+			echolog "DNS 重启或设置恢复失败，已执行 Passwall 停止清理。"
+			return 1
+		}
+	}
 	start_crontab
 	echolog "运行完成！\n"
 }
 
 stop() {
+	local dns_status=0
 	clean_log
+	# Remove DNS references before terminating the proxy processes they use.
+	source $APP_PATH/helper_dnsmasq.sh del || dns_status=1
+	source $APP_PATH/helper_dnsmasq.sh restart no_log=1 || dns_status=1
 	[ -n "$($(source $APP_PATH/iptables.sh get_ipt_bin) -t mangle -t nat -L -nv 2>/dev/null | grep "PSW")" ] && source $APP_PATH/iptables.sh stop
 	[ -n "$(nft list chains 2>/dev/null | grep "PSW")" ] && source $APP_PATH/nftables.sh stop
 	delete_ip2route
@@ -1380,14 +1404,17 @@ stop() {
 	unset V2RAY_LOCATION_ASSET
 	unset XRAY_LOCATION_ASSET
 	stop_crontab
-	source $APP_PATH/helper_dnsmasq.sh del
-	source $APP_PATH/helper_dnsmasq.sh restart no_log=1
 	[ -s "$TMP_PATH/bridge_nf_ipt" ] && sysctl -w net.bridge.bridge-nf-call-iptables=$(cat $TMP_PATH/bridge_nf_ipt) >/dev/null 2>&1
 	[ -s "$TMP_PATH/bridge_nf_ip6t" ] && sysctl -w net.bridge.bridge-nf-call-ip6tables=$(cat $TMP_PATH/bridge_nf_ip6t) >/dev/null 2>&1
-	rm -rf ${TMP_PATH}
+	# Keep recovery information for another stop attempt if DNS work failed.
+	[ "$dns_status" = 0 ] && rm -rf ${TMP_PATH}
 	rm -rf /tmp/lock/${CONFIG}_socks_auto_switch*
-	echolog "清空并关闭相关程序和缓存完成。"
-	exit 0
+	if [ "$dns_status" = 0 ]; then
+		echolog "清空并关闭相关程序和缓存完成。"
+	else
+		echolog "Passwall 已停止，但 DNS 清理或恢复未完成；保留临时文件供下次停止重试。"
+	fi
+	return 0
 }
 
 ENABLED=$(config_t_get global enabled 0)
@@ -1444,6 +1471,13 @@ RESOLVFILE=/tmp/resolv.conf.d/resolv.conf.auto
 ISP_DNS=$(cat $RESOLVFILE 2>/dev/null | grep -E -o "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | sort -u | grep -v 0.0.0.0 | grep -v 127.0.0.1)
 ISP_DNS6=$(cat $RESOLVFILE 2>/dev/null | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | awk -F % '{print $1}' | awk -F " " '{print $2}'| sort -u | grep -v -Fx ::1 | grep -v -Fx ::)
 
+# Recover pending temporary settings before deriving the DNS upstreams.
+[ "$1" = "start" ] && {
+	source $APP_PATH/helper_dnsmasq.sh restore || {
+		echolog "原有 DNS 设置尚未恢复，停止启动。"
+		exit 1
+	}
+}
 DEFAULT_DNS=$(uci show dhcp | grep "@dnsmasq" | grep "\.server=" | awk -F '=' '{print $2}' | sed "s/'//g" | tr ' ' '\n' | grep -v "\/" | head -2 | sed ':label;N;s/\n/,/;b label')
 [ -z "${DEFAULT_DNS}" ] && [ "$(echo $ISP_DNS | tr ' ' '\n' | wc -l)" -le 2 ] && DEFAULT_DNS=$(echo -n $ISP_DNS | tr ' ' '\n' | head -2 | tr '\n' ',')
 LOCAL_DNS="${DEFAULT_DNS:-119.29.29.29,223.5.5.5}"
