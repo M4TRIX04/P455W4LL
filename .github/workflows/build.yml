@@ -35,10 +35,6 @@ on:
         description: '目标平台，空格分隔（如 x86/64 ramips/mt7621）'
         required: false
         default: 'x86/64'
-  # 每周一 02:00 (CST) 跑一次。用途不是出包，是**发现 feed 漂移**：
-  # 上游 openwrt-passwall-packages 随时可能删包或改版本，定时跑能在你升级设备前就报警。
-  schedule:
-    - cron: '0 18 * * 0'
 
 # 同一分支只保留最新一次，避免排队堆积
 concurrency:
